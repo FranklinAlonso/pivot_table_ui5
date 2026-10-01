@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://sap.github.io/ui5-tooling/schema/ui5.yaml.json
+
+specVersion: "4.0"
+metadata:
+  name: com.frank.pivot
+type: library
+framework:
+  name: SAPUI5
+  version: 1.152.0
+  libraries:
+    - name: sap.ui.core
+    - name: sap.m
+    - name: sap.ui.table
+    - name: sap.ui.export
+    - name: sap.ui.unified
+    - name: themelib_sap_horizon
+      optional: true
+builder:
+  libraryPreload:
+    excludes:
+      # El worker no es un módulo UI5: se carga con new Worker(url)
+      - com/frank/pivot/engine/PivotWorker.js

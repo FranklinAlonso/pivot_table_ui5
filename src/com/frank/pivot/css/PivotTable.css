@@ -1,0 +1,44 @@
+/*
+ * com.frank.pivot - Estilos de la tabla pivote.
+ * Usa variables CSS del tema activo (con valores de respaldo) para funcionar en
+ * sap_horizon, sap_fiori_3, modos oscuros y de alto contraste.
+ */
+.pvPivotTable {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+}
+
+.pvPivotTable .pvTableContainer {
+	flex: 1 1 auto;
+	min-height: 0;
+	position: relative;
+}
+
+.pvPivotTable .pvStrip {
+	margin: 0.25rem 0;
+}
+
+/* Subtotales y grupos del árbol: negrita + fondo de grupo */
+.pvPivotTable [data-pivot-type="subtotal"],
+.pvPivotTable [data-pivot-type="group"],
+.pvPivotTable [data-pivot-type="total"] {
+	font-family: var(--sapFontBoldFamily, inherit);
+	font-weight: bold;
+}
+
+.pvPivotTable tr:has([data-pivot-type="subtotal"]) > td,
+.pvPivotTable tr:has([data-pivot-type="group"]) > td {
+	background-color: var(--sapList_TableGroupHeaderBackground, #eef1f5);
+}
+
+/* Total general: fondo más marcado y separador superior */
+.pvPivotTable tr:has([data-pivot-type="total"]) > td {
+	background-color: var(--sapList_FooterBackground, #d5dadd);
+	border-top: 1px solid var(--sapList_BorderColor, #a8b3bd);
+}
+
+/* Cabeceras multinivel centradas; la fila inferior alineada con los números */
+.pvPivotTable .sapUiTableHeaderCell .sapMLabel {
+	width: 100%;
+}

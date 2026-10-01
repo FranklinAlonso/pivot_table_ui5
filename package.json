@@ -1,0 +1,29 @@
+{
+  "name": "pivot_ui5",
+  "version": "1.0.0",
+  "description": "Tabla pivote reutilizable para SAPUI5 / SAP Fiori",
+  "author": "Franklin Alonso De La Cruz Guerra",
+  "license": "UNLICENSED",
+  "keywords": [
+    "ui5",
+    "sapui5",
+    "fiori",
+    "pivot",
+    "library"
+  ],
+  "files": [
+    "src",
+    "ui5.yaml",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "start": "ui5 serve --open /test-resources/com/frank/pivot/qunit/testsuite.qunit.html",
+    "build": "ui5 build --clean-dest --dest dist",
+    "test": "node test-node/run-qunit.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "devDependencies": {
+    "@ui5/cli": "^4.0.33"
+  }
+}

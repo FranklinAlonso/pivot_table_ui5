@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<library xmlns="http://www.sap.com/sap.ui.library.xsd">
+	<name>com.frank.pivot</name>
+	<vendor>Frank</vendor>
+	<copyright></copyright>
+	<version>${version}</version>
+	<documentation>Tabla pivote (filas x columnas) para SAPUI5 / SAP Fiori</documentation>
+	<dependencies>
+		<dependency>
+			<libraryName>sap.ui.core</libraryName>
+		</dependency>
+		<dependency>
+			<libraryName>sap.m</libraryName>
+		</dependency>
+		<dependency>
+			<libraryName>sap.ui.table</libraryName>
+		</dependency>
+		<dependency>
+			<libraryName>sap.ui.export</libraryName>
+			<lazy>true</lazy>
+		</dependency>
+		<dependency>
+			<libraryName>sap.ui.unified</libraryName>
+			<lazy>true</lazy>
+		</dependency>
+	</dependencies>
+</library>
