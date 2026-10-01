@@ -2,6 +2,17 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y [versionado semántico](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Cambiado
+
+- La exportación a Excel reproduce la disposición de la tabla: cabeceras multinivel con celdas combinadas (incluidos subtotales y total general), nombres de las dimensiones de columna, paneles fijos, etiquetas de fila compactas como en pantalla, subtotales/totales en negrita y formatos numéricos equivalentes. En la vista jerárquica se exporta una sola columna con sangría y esquema de filas.
+- La exportación ya no usa `sap.ui.export` (que solo admite una fila de cabecera): el `.xlsx` se genera con `sap/ui/thirdparty/jszip`. Se elimina la dependencia de `sap.ui.export`.
+
+### Corregido
+
+- Nombre de hoja y de fichero con caracteres no válidos en Excel o en el sistema de archivos.
+
 ## [1.1.0] - 2026-10-01
 
 ### Añadido

@@ -24,6 +24,7 @@ sap.ui.define(function () {
 			"provider/ODataV4Provider": { title: "Proveedor OData V4" },
 			"panel/FieldPanel": { title: "Panel de campos" },
 			"table/ColorRules": { title: "Reglas de color" },
+			"export/PivotLayout": { title: "Exportación a Excel" },
 			"panel/ColorRulesDialog": { title: "Diálogo de colores" },
 			"variant/ViewFormat": { title: "Formato de vistas" },
 			"variant/PersonalStore": { title: "Vistas personales" },

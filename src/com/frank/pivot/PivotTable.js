@@ -449,7 +449,8 @@ sap.ui.define([
 	};
 
 	/**
-	 * Exporta el resultado actual a Excel (sap.ui.export).
+	 * Exporta el resultado actual a Excel con la misma disposición que la tabla
+	 * (cabeceras multinivel combinadas, subtotales y, en la vista jerárquica, esquema de filas).
 	 * @returns {Promise} Se resuelve cuando el fichero se ha generado
 	 * @public
 	 */
@@ -457,7 +458,9 @@ sap.ui.define([
 		var that = this;
 		return new Promise(function (fnResolve, fnReject) {
 			sap.ui.require(["com/frank/pivot/export/PivotExport"], function (PivotExport) {
-				PivotExport.exportResult(that.getResult(), that._aValueSpecs || [], that.getTitle()).then(fnResolve, fnReject);
+				PivotExport.exportResult(that.getResult(), that._aValueSpecs || [], that.getTitle(), {
+					hierarchical: that.getInnerTable().isA("sap.ui.table.TreeTable")
+				}).then(fnResolve, fnReject);
 			}, fnReject);
 		});
 	};

@@ -11,7 +11,6 @@ framework:
     - name: sap.ui.core
     - name: sap.m
     - name: sap.ui.table
-    - name: sap.ui.export
     - name: sap.ui.unified
     - name: themelib_sap_horizon
       optional: true

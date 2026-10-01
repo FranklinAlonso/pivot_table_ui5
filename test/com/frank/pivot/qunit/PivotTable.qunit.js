@@ -229,15 +229,17 @@ sap.ui.define([
 
 	QUnit.module("PivotExport");
 
-	QUnit.test("Columnas y filas de la hoja", async function (assert) {
+	QUnit.test("La hoja reproduce la disposición de la tabla", async function (assert) {
 		var oPivot = await render(create());
-		var oResult = oPivot.getResult();
-		var aColumns = PivotExport.createColumns(oResult, oPivot._aValueSpecs);
-		var aRows = PivotExport.createRows(oResult);
-		assert.strictEqual(aColumns.length, 5);
-		assert.strictEqual(aColumns[0].label, "Región");
-		assert.strictEqual(aColumns[2].label, "2024");
-		assert.strictEqual(aRows[3].d0, "EMEA", "etiqueta rellenada hacia abajo para Francia");
+		var oLayout = PivotExport.createLayout(oPivot.getResult(), oPivot._aValueSpecs);
+		var aTable = oPivot.getInnerTable().getColumns();
+		assert.strictEqual(oLayout.rows[0].cells.length, aTable.length, "mismas columnas que la tabla");
+		assert.strictEqual(oLayout.rows[0].cells[0].value, "Región");
+		assert.strictEqual(oLayout.rows[0].cells[2].value, "2024");
+		assert.strictEqual(oLayout.freezeColumns, oPivot.getInnerTable().getFixedColumnCount(), "columnas fijas");
+		assert.strictEqual(oLayout.rows.length - oLayout.headerRows, oPivot.getInnerTable().getBinding("rows").getLength(),
+			"mismas filas, incluidos subtotales y total");
+		assert.strictEqual(oLayout.rows[4].cells[0].value, "", "etiqueta repetida vacía, como en pantalla");
 		oPivot.destroy();
 	});
 

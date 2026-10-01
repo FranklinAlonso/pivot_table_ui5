@@ -161,7 +161,7 @@ onCellPress: function (oEvent) {
 | `openColorRules()` | Abre directamente el diálogo de colores. Devuelve `Promise<reglas \| null>` |
 | `getDistinctValues(campo)` | Valores distintos y ordenados de un campo (máximo 1000) |
 | `openPersonalization()` | Abre el panel. Devuelve `Promise<config \| null>` |
-| `exportToSpreadsheet()` | Exporta a `.xlsx`. Devuelve `Promise` |
+| `exportToSpreadsheet()` | Exporta a `.xlsx` con la misma disposición que la tabla: cabeceras multinivel combinadas, dimensiones y cabeceras fijas, subtotales y totales en negrita y, en la vista jerárquica, una columna con sangría y filas agrupadas (esquema). Devuelve `Promise` |
 | `getResult()` | Último resultado del motor (ver abajo) |
 | `getInnerTable()` | `sap.ui.table.Table` o `TreeTable` interna, para ajustes avanzados |
 | `saveVariant(nombre, opciones?)` | Guarda la configuración actual como vista. Opciones: `key` (sobrescribir), `public`, `default`. Devuelve `Promise<vista>` |

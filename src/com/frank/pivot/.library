@@ -16,10 +16,6 @@
 			<libraryName>sap.ui.table</libraryName>
 		</dependency>
 		<dependency>
-			<libraryName>sap.ui.export</libraryName>
-			<lazy>true</lazy>
-		</dependency>
-		<dependency>
 			<libraryName>sap.ui.unified</libraryName>
 			<lazy>true</lazy>
 		</dependency>

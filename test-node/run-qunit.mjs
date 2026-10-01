@@ -19,6 +19,7 @@ const TESTS = [
 	"com/frank/pivot/test/engine/PivotEngine.qunit",
 	"com/frank/pivot/test/provider/ApplyBuilder.qunit",
 	"com/frank/pivot/test/table/ColorRules.qunit",
+	"com/frank/pivot/test/export/PivotLayout.qunit",
 	"com/frank/pivot/test/variant/ViewFormat.qunit",
 	"com/frank/pivot/test/variant/PersonalStore.qunit"
 ];
