@@ -15,7 +15,7 @@ En el `package.json` de la app (en `dependencies`, no en `devDependencies`), fij
 
 ```json
 "dependencies": {
-  "pivot_ui5": "github:FranklinAlonso/pivot_table_ui5#v1.0.0"
+  "pivot_ui5": "github:FranklinAlonso/pivot_table_ui5#v1.2.0"
 }
 ```
 
