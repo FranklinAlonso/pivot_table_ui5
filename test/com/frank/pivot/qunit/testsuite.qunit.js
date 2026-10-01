@@ -25,6 +25,9 @@ sap.ui.define(function () {
 			"panel/FieldPanel": { title: "Panel de campos" },
 			"table/ColorRules": { title: "Reglas de color" },
 			"panel/ColorRulesDialog": { title: "Diálogo de colores" },
+			"variant/ViewFormat": { title: "Formato de vistas" },
+			"variant/PersonalStore": { title: "Vistas personales" },
+			"variant/ODataV4Store": { title: "Vistas en OData V4" },
 			"PivotTable": { title: "Control PivotTable" }
 		}
 	};

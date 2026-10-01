@@ -4,9 +4,10 @@ sap.ui.define([
 	"com/frank/pivot/PivotValue",
 	"com/frank/pivot/PivotField",
 	"com/frank/pivot/export/PivotExport",
+	"com/frank/pivot/variant/LocalStorageStore",
 	"sap/ui/model/json/JSONModel",
 	"sap/ui/test/utils/nextUIUpdate"
-], function (PivotTable, PivotValue, PivotField, PivotExport, JSONModel, nextUIUpdate) {
+], function (PivotTable, PivotValue, PivotField, PivotExport, LocalStorageStore, JSONModel, nextUIUpdate) {
 	"use strict";
 
 	var DATA = [
@@ -215,6 +216,11 @@ sap.ui.define([
 		assert.strictEqual(oPivot.getValues()[0].getAggregationType(), "Max");
 		assert.ok(oPivot.getHierarchical());
 
+		oPivot.setConfiguration({ expandLevel: 3, repeatRowLabels: true, colorShadeStep: 0.3 });
+		oConfig = oPivot.getConfiguration();
+		assert.deepEqual([oConfig.expandLevel, oConfig.repeatRowLabels, oConfig.colorShadeStep], [3, true, 0.3],
+			"también se guardan nivel de expansión, etiquetas repetidas y tono");
+
 		oPivot.setConfiguration({ colorRules: [{ field: "Anio", value: 2024, color: "#FFF3B0" }, { field: "", color: "#fff" }] });
 		assert.deepEqual(oPivot.getConfiguration().colorRules, [{ field: "Anio", value: 2024, color: "#FFF3B0" }],
 			"las reglas se guardan normalizadas");
@@ -233,5 +239,167 @@ sap.ui.define([
 		assert.strictEqual(aColumns[2].label, "2024");
 		assert.strictEqual(aRows[3].d0, "EMEA", "etiqueta rellenada hacia abajo para Francia");
 		oPivot.destroy();
+	});
+
+	/** assert.rejects no existe en QUnit 2.3 */
+	async function expectRejection(assert, pPromise, rMessage) {
+		try {
+			await pPromise;
+			assert.ok(false, "se esperaba un rechazo");
+		} catch (oError) {
+			assert.ok(rMessage.test(oError && oError.message), "rechazada: " + (oError && oError.message));
+		}
+	}
+
+	QUnit.module("PivotTable - vistas", {
+		beforeEach: function () {
+			var mData = {};
+			this.oStore = new LocalStorageStore({
+				storage: {
+					getItem: function (sKey) {
+						return mData[sKey] || null;
+					},
+					setItem: function (sKey, sValue) {
+						mData[sKey] = sValue;
+					}
+				}
+			});
+		},
+		afterEach: function () {
+			this.oPivot && this.oPivot.destroy();
+		}
+	});
+
+	/** Espera a que terminen las promesas del almacén y el renderizado. */
+	async function settle() {
+		for (var i = 0; i < 3; i++) {
+			await new Promise(function (fnResolve) {
+				setTimeout(fnResolve, 0);
+			});
+		}
+		await nextUIUpdate();
+	}
+
+	async function renderWithViews(oStore, mSettings) {
+		var oPivot = create(Object.assign({ variantManagement: true, persistencyKey: "ventas" }, mSettings));
+		oPivot.setVariantStore(oStore);
+		await render(oPivot);
+		await settle();
+		return oPivot;
+	}
+
+	function variantManagement(oPivot) {
+		return oPivot.getAggregation("_toolbar").getContent()[1];
+	}
+
+	QUnit.test("Sin persistencyKey no hay selector de vistas", async function (assert) {
+		this.oPivot = await render(create({ variantManagement: true }));
+		assert.strictEqual(this.oPivot.getCurrentVariantKey(), null);
+		assert.notOk(this.oPivot.getDomRef().querySelector(".sapMVarMng"), "no se muestra");
+		await expectRejection(assert, this.oPivot.saveVariant("X"), /no está activa/);
+	});
+
+	QUnit.test("Guardar, cambiar y volver a una vista", async function (assert) {
+		var oPivot = this.oPivot = await renderWithViews(this.oStore);
+		var oVM = variantManagement(oPivot);
+		assert.ok(oVM.isA("sap.m.VariantManagement"), "selector junto al título");
+		assert.ok(oVM.getDomRef(), "se muestra");
+		assert.strictEqual(oPivot.getCurrentVariantKey(), PivotTable.STANDARD_VARIANT_KEY);
+		assert.strictEqual(oVM.getItems()[0].getTitle(), "Estándar");
+		assert.strictEqual(oVM.getSupportPublic(), false, "almacén personal: sin vistas públicas");
+
+		var aSaved = [];
+		oPivot.attachVariantSave(function (oEvent) {
+			aSaved.push(oEvent.getParameters());
+		});
+		oPivot.setConfiguration({ rows: ["Pais"], showSubtotals: false });
+		var oView = await oPivot.saveVariant("Por país", { "default": true });
+		assert.strictEqual(oPivot.getCurrentVariantKey(), oView.key, "la vista nueva queda seleccionada");
+		assert.strictEqual(oVM.getDefaultKey(), oView.key);
+		assert.deepEqual(oPivot.getVariants().map(function (o) { return o.name; }), ["Por país"]);
+		assert.strictEqual(aSaved[0].name, "Por país");
+		assert.strictEqual(aSaved[0].overwrite, false);
+		assert.strictEqual((await this.oStore.load("ventas")).defaultKey, oView.key, "por defecto guardada en el almacén");
+
+		var aSelected = [];
+		oPivot.attachVariantSelect(function (oEvent) {
+			aSelected.push(oEvent.getParameter("key"));
+		});
+		assert.ok(oPivot.applyVariant(PivotTable.STANDARD_VARIANT_KEY));
+		assert.deepEqual(oPivot.getRows(), ["Region", "Pais"], "la estándar es la configuración inicial");
+		assert.strictEqual(oPivot.getShowSubtotals(), true);
+		assert.ok(oPivot.applyVariant(oView.key));
+		assert.deepEqual(oPivot.getRows(), ["Pais"]);
+		assert.strictEqual(oPivot.getShowSubtotals(), false);
+		assert.deepEqual(aSelected, [PivotTable.STANDARD_VARIANT_KEY, oView.key]);
+		assert.notOk(oPivot.applyVariant("no-existe"));
+
+		oPivot.setConfiguration({ columns: [] });
+		await oPivot.saveVariant("Por país", { key: oView.key });
+		assert.deepEqual((await this.oStore.load("ventas")).variants[0].configuration.columns, [], "sobrescrita");
+		assert.strictEqual(aSaved[1].overwrite, true);
+	});
+
+	QUnit.test("Aplica la vista por defecto antes del primer cálculo", async function (assert) {
+		var oView = await this.oStore.save("ventas", { name: "Por país", configuration: { rows: ["Pais"], columns: [] } });
+		await this.oStore.setDefault("ventas", oView.key);
+		var iUpdates = 0;
+		var oPivot = this.oPivot = create({ variantManagement: true, persistencyKey: "ventas" });
+		oPivot.setVariantStore(this.oStore);
+		oPivot.attachUpdateFinished(function () {
+			iUpdates++;
+		});
+		await render(oPivot);
+		await settle();
+		assert.strictEqual(oPivot.getCurrentVariantKey(), oView.key);
+		assert.deepEqual(oPivot.getRows(), ["Pais"]);
+		assert.deepEqual(oPivot.getColumns(), []);
+		assert.deepEqual(oPivot.getValues().map(function (o) { return o.getField(); }), ["Importe"],
+			"lo que la vista no guarda se toma de la estándar");
+		assert.strictEqual(iUpdates, 1, "un solo cálculo, ya con la vista por defecto");
+		assert.strictEqual(oPivot.getInnerTable().getBinding("rows").getLength(), 4, "3 países + total");
+	});
+
+	QUnit.test("Cambios desde el panel marcan la vista como modificada", async function (assert) {
+		var oPivot = this.oPivot = await renderWithViews(this.oStore);
+		var oVM = variantManagement(oPivot);
+		assert.notOk(oVM.getModified());
+		oPivot.fireConfigurationChange({ configuration: oPivot.getConfiguration() });
+		assert.ok(oVM.getModified());
+		oPivot.applyVariant(PivotTable.STANDARD_VARIANT_KEY);
+		assert.notOk(oVM.getModified(), "al aplicar una vista se limpia");
+	});
+
+	QUnit.test("Gestionar: renombrar, borrar y cambiar la vista por defecto", async function (assert) {
+		var oPivot = this.oPivot = await renderWithViews(this.oStore);
+		var oVM = variantManagement(oPivot);
+		oPivot.setConfiguration({ rows: ["Pais"] });
+		var oA = await oPivot.saveVariant("A");
+		var oB = await oPivot.saveVariant("B");
+
+		oVM.fireManage({ renamed: [{ key: oA.key, name: "A2" }], deleted: [oB.key], def: oA.key });
+		await settle();
+		var oData = await this.oStore.load("ventas");
+		assert.deepEqual(oData.variants.map(function (o) { return o.name; }), ["A2"]);
+		assert.strictEqual(oData.defaultKey, oA.key);
+		assert.notOk(oVM.getItemByKey(oB.key), "el elemento borrado se quita del selector");
+		assert.strictEqual(oPivot.getCurrentVariantKey(), PivotTable.STANDARD_VARIANT_KEY, "se borró la vista activa");
+		assert.deepEqual(oPivot.getRows(), ["Region", "Pais"]);
+
+		oVM.fireManage({ def: PivotTable.STANDARD_VARIANT_KEY });
+		await settle();
+		assert.strictEqual((await this.oStore.load("ventas")).defaultKey, null);
+	});
+
+	QUnit.test("Una vista con campos que ya no existen se aplica sin ellos", async function (assert) {
+		var oView = await this.oStore.save("ventas", {
+			name: "Antigua",
+			configuration: { rows: ["Region", "Ciudad"], filters: { Ciudad: ["Lyon"] }, colorRules: [{ field: "Anio", color: "red;}" }] }
+		});
+		var oPivot = this.oPivot = await renderWithViews(this.oStore);
+		assert.ok(oPivot.applyVariant(oView.key));
+		assert.deepEqual(oPivot.getRows(), ["Region"]);
+		assert.deepEqual(oPivot.getFilters(), {});
+		assert.deepEqual(oPivot.getConfiguration().colorRules, [], "colores inseguros descartados");
 	});
 });

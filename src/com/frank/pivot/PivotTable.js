@@ -3,6 +3,7 @@
  */
 sap.ui.define([
 	"sap/ui/core/Control",
+	"sap/ui/core/Component",
 	"sap/ui/core/Lib",
 	"sap/ui/model/json/JSONModel",
 	"sap/ui/table/Table",
@@ -22,11 +23,16 @@ sap.ui.define([
 	"./table/ColumnBuilder",
 	"./table/ColorRules",
 	"./provider/ClientDataProvider",
-	"./provider/ODataV4Provider"
+	"./provider/ODataV4Provider",
+	"./variant/VariantController",
+	"./variant/LocalStorageStore",
+	"./variant/UshellPersonalizationStore",
+	"./variant/ODataV4Store"
 ], function (
-	Control, Lib, JSONModel, Table, TreeTable, FixedRowMode, AutoRowMode,
+	Control, Component, Lib, JSONModel, Table, TreeTable, FixedRowMode, AutoRowMode,
 	OverflowToolbar, Title, ToolbarSpacer, Button, MessageStrip, Log,
-	library, PivotValue, PivotEngine, WorkerClient, ColumnBuilder, ColorRules, ClientDataProvider, ODataV4Provider
+	library, PivotValue, PivotEngine, WorkerClient, ColumnBuilder, ColorRules, ClientDataProvider, ODataV4Provider,
+	VariantController, LocalStorageStore, UshellPersonalizationStore, ODataV4Store
 ) {
 	"use strict";
 
@@ -120,7 +126,18 @@ sap.ui.define([
 				height: { type: "sap.ui.core.CSSSize", defaultValue: "auto" },
 				dimensionColumnWidth: { type: "sap.ui.core.CSSSize", defaultValue: "11rem" },
 				valueColumnWidth: { type: "sap.ui.core.CSSSize", defaultValue: "9rem" },
-				noDataText: { type: "string", defaultValue: "" }
+				noDataText: { type: "string", defaultValue: "" },
+				/**
+				 * Selector de vistas guardadas en la barra de herramientas. Requiere <code>persistencyKey</code>.
+				 * Sin <code>variantEntitySet</code> las vistas son personales (Launchpad o, fuera de él, navegador).
+				 */
+				variantManagement: { type: "boolean", defaultValue: false },
+				/** Identifica las vistas de esta tabla, única por app y tabla, p. ej. "ventas.pivotRegion". */
+				persistencyKey: { type: "string", defaultValue: "" },
+				/** Vistas en OData V4 (p. ej. CAP): nombre del modelo del servicio (vacío = modelo por defecto). */
+				variantModelName: { type: "string", defaultValue: "" },
+				/** Vistas en OData V4: ruta del EntitySet, p. ej. "/PivotViews". Activa las vistas compartidas. */
+				variantEntitySet: { type: "string", defaultValue: "" }
 			},
 			defaultAggregation: "values",
 			aggregations: {
@@ -162,7 +179,25 @@ sap.ui.define([
 					}
 				},
 				/** Error al leer o calcular. */
-				loadError: { parameters: { message: { type: "string" } } }
+				loadError: { parameters: { message: { type: "string" } } },
+				/** El usuario eligió una vista (también "Estándar"). */
+				variantSelect: {
+					parameters: {
+						key: { type: "string" },
+						name: { type: "string" },
+						configuration: { type: "object" }
+					}
+				},
+				/** Se guardó una vista. */
+				variantSave: {
+					parameters: {
+						key: { type: "string" },
+						name: { type: "string" },
+						"public": { type: "boolean" },
+						/** true si se sobrescribió una vista existente */
+						overwrite: { type: "boolean" }
+					}
+				}
 			}
 		},
 
@@ -203,6 +238,11 @@ sap.ui.define([
 			showCloseButton: true
 		}).addStyleClass("pvStrip"));
 		this._createTable(false);
+		this.attachConfigurationChange(function () {
+			if (this._oVariants) {
+				this._oVariants.markModified();
+			}
+		}, this);
 		this.attachModelContextChange(function () {
 			if (this.getMode() === DataMode.ODataV4) {
 				this.invalidate();
@@ -211,12 +251,16 @@ sap.ui.define([
 	};
 
 	PivotTable.prototype.exit = function () {
+		if (this._oVariants) {
+			this._oVariants.destroy();
+		}
 		this._applyColorStyles([]);
 		this._oModel.destroy();
 		this._iRun++; // descarta resultados asíncronos pendientes
 	};
 
 	PivotTable.prototype.onBeforeRendering = function () {
+		this._syncVariants();
 		this._syncTableType();
 		this._syncTableSettings();
 		this._syncToolbar();
@@ -280,7 +324,10 @@ sap.ui.define([
 			colorRules: ColorRules.normalize(this.getColorRules()),
 			showSubtotals: this.getShowSubtotals(),
 			showGrandTotals: this.getShowGrandTotals(),
-			hierarchical: this.getHierarchical()
+			hierarchical: this.getHierarchical(),
+			expandLevel: this.getExpandLevel(),
+			repeatRowLabels: this.getRepeatRowLabels(),
+			colorShadeStep: this.getColorShadeStep()
 		};
 	};
 
@@ -295,7 +342,8 @@ sap.ui.define([
 		if (!oConfig) {
 			return this;
 		}
-		["rows", "columns", "filters", "colorRules", "showSubtotals", "showGrandTotals", "hierarchical"].forEach(function (sKey) {
+		["rows", "columns", "filters", "colorRules", "showSubtotals", "showGrandTotals", "hierarchical",
+			"expandLevel", "repeatRowLabels", "colorShadeStep"].forEach(function (sKey) {
 			if (oConfig[sKey] !== undefined) {
 				that.setProperty(sKey, oConfig[sKey]);
 			}
@@ -411,6 +459,156 @@ sap.ui.define([
 			sap.ui.require(["com/frank/pivot/export/PivotExport"], function (PivotExport) {
 				PivotExport.exportResult(that.getResult(), that._aValueSpecs || [], that.getTitle()).then(fnResolve, fnReject);
 			}, fnReject);
+		});
+	};
+
+	// ------------------------------------------------------------------ API pública: vistas
+
+	/**
+	 * Clave de la vista "Estándar" (la configuración inicial de la tabla).
+	 * @type {string}
+	 * @public
+	 */
+	PivotTable.STANDARD_VARIANT_KEY = VariantController.STANDARD_KEY;
+
+	/**
+	 * Almacén propio de vistas (ver README, "Vistas guardadas"). Tiene prioridad sobre
+	 * <code>variantEntitySet</code> y los almacenes personales.
+	 * @param {object|null} oStore Objeto con supportsPublic, load, save, remove y setDefault
+	 * @returns {this} this
+	 * @public
+	 */
+	PivotTable.prototype.setVariantStore = function (oStore) {
+		this._oVariantStore = oStore || null;
+		this.invalidate();
+		return this;
+	};
+
+	/**
+	 * Almacén de vistas en uso.
+	 * @returns {object|null} Almacén, o null si el modelo de vistas aún no está disponible
+	 * @public
+	 */
+	PivotTable.prototype.getVariantStore = function () {
+		return this._resolveVariantStore();
+	};
+
+	/**
+	 * Vistas guardadas cargadas (sin la "Estándar").
+	 * @returns {object[]} Vistas {key, name, public, author, editable, schemaVersion, configuration}
+	 * @public
+	 */
+	PivotTable.prototype.getVariants = function () {
+		return this._oVariants ? this._oVariants.getViews() : [];
+	};
+
+	/**
+	 * @returns {string|null} Clave de la vista seleccionada, o null sin gestión de vistas
+	 * @public
+	 */
+	PivotTable.prototype.getCurrentVariantKey = function () {
+		return this._oVariants ? this._oVariants.getSelectedKey() : null;
+	};
+
+	/**
+	 * Aplica una vista guardada o la estándar (<code>PivotTable.STANDARD_VARIANT_KEY</code>).
+	 * @param {string} sKey Clave de la vista
+	 * @returns {boolean} false si no existe o la gestión de vistas no está activa
+	 * @public
+	 */
+	PivotTable.prototype.applyVariant = function (sKey) {
+		return this._oVariants ? this._oVariants.select(sKey) : false;
+	};
+
+	/**
+	 * Guarda la configuración actual como vista.
+	 * @param {string} sName Nombre
+	 * @param {object} [mOptions] Opciones
+	 * @param {string} [mOptions.key] Vista existente a sobrescribir
+	 * @param {boolean} [mOptions.public] Compartida (requiere un almacén que lo admita)
+	 * @param {boolean} [mOptions.default] Marcar como vista por defecto del usuario
+	 * @returns {Promise<object>} Vista guardada
+	 * @public
+	 */
+	PivotTable.prototype.saveVariant = function (sName, mOptions) {
+		if (!this._oVariants || !this._oActiveVariantStore) {
+			return Promise.reject(new Error("La gestión de vistas no está activa (variantManagement y persistencyKey)"));
+		}
+		return this._oVariants.save(Object.assign({}, mOptions, { name: sName }));
+	};
+
+	// ------------------------------------------------------------------ interno: vistas
+
+	PivotTable.prototype._getPersonalVariantStore = function () {
+		if (!this._oPersonalVariantStore) {
+			this._oPersonalVariantStore = UshellPersonalizationStore.isAvailable() ?
+				new UshellPersonalizationStore({ component: Component.getOwnerComponentFor(this) }) :
+				new LocalStorageStore();
+		}
+		return this._oPersonalVariantStore;
+	};
+
+	PivotTable.prototype._resolveVariantStore = function () {
+		if (this._oVariantStore) {
+			return this._oVariantStore;
+		}
+		var sEntitySet = this.getVariantEntitySet();
+		if (!sEntitySet) {
+			return this._getPersonalVariantStore();
+		}
+		var oModel = this.getModel(this.getVariantModelName() || undefined);
+		if (!oModel) {
+			return null;
+		}
+		var oStore = this._oODataVariantStore;
+		if (!oStore || oStore._oModel !== oModel || oStore._sEntitySet !== sEntitySet) {
+			this._oODataVariantStore = new ODataV4Store({
+				model: oModel,
+				entitySet: sEntitySet,
+				defaultStore: this._getPersonalVariantStore()
+			});
+		}
+		return this._oODataVariantStore;
+	};
+
+	/**
+	 * Crea el selector de vistas y carga las vistas cuando cambian el almacén o la clave.
+	 * Mientras se cargan no se calcula la tabla, para no leer datos con la vista estándar
+	 * y repetir la lectura con la vista por defecto del usuario.
+	 * @private
+	 */
+	PivotTable.prototype._syncVariants = function () {
+		var that = this;
+		var sKey = this.getPersistencyKey();
+		var bEnabled = this.getVariantManagement();
+		if (bEnabled && !sKey && !this._bPersistencyKeyWarned) {
+			this._bPersistencyKeyWarned = true;
+			Log.warning("variantManagement requiere persistencyKey", this.getId(), "com.frank.pivot");
+		}
+		var oStore = bEnabled && sKey ? this._resolveVariantStore() : null;
+		if (this._oVariants) {
+			this._oVariants.getControl().setVisible(!!oStore);
+		}
+		if (!oStore || (oStore === this._oActiveVariantStore && sKey === this._sActiveVariantKey)) {
+			return;
+		}
+		if (!this._oVariants) {
+			this._oVariants = new VariantController(this);
+			this.getAggregation("_toolbar").insertContent(this._oVariants.getControl(), 1);
+		}
+		this._oActiveVariantStore = oStore;
+		this._sActiveVariantKey = sKey;
+		this._bVariantsPending = true;
+		this.getInnerTable().setBusy(true);
+		this._oVariants.activate(oStore, sKey).catch(function (oError) {
+			Log.error("No se pudo aplicar la vista por defecto", oError && oError.message, "com.frank.pivot");
+		}).then(function () {
+			if (oStore !== that._oActiveVariantStore || that.isDestroyed()) {
+				return;
+			}
+			that._bVariantsPending = false;
+			that.getInnerTable().setBusy(false);
+			that.invalidate();
 		});
 	};
 
@@ -593,6 +791,9 @@ sap.ui.define([
 	 */
 	PivotTable.prototype._update = function (bForce) {
 		var that = this;
+		if (this._bVariantsPending) {
+			return; // se recalcula al terminar de cargar las vistas
+		}
 		var oConfig = this._getEngineConfig();
 		var bClient = this.getMode() !== DataMode.ODataV4;
 		var aRecords = bClient ? (this.getRecords() || []) : null;

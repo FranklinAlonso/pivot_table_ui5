@@ -119,6 +119,10 @@ sap.ui.define(["com/frank/pivot/PivotTable", "com/frank/pivot/PivotValue"], func
 | `width` / `height` | `CSSSize` | `100%` / `auto` | Tamaño |
 | `dimensionColumnWidth` / `valueColumnWidth` | `CSSSize` | `11rem` / `9rem` | Anchos de columna |
 | `noDataText` | `string` | `""` | Texto cuando no hay datos |
+| `variantManagement` | `boolean` | `false` | Selector de vistas guardadas (ver [Vistas guardadas](#vistas-guardadas)). Requiere `persistencyKey` |
+| `persistencyKey` | `string` | `""` | Identifica las vistas de esta tabla; único por app y tabla, p. ej. `ventas.pivotRegion` |
+| `variantModelName` | `string` | `""` | Vistas en OData V4: nombre del modelo del servicio de vistas (vacío = modelo por defecto) |
+| `variantEntitySet` | `string` | `""` | Vistas en OData V4: EntitySet, p. ej. `/PivotViews`. Activa las vistas compartidas |
 
 ### Agregaciones
 
@@ -136,6 +140,8 @@ sap.ui.define(["com/frank/pivot/PivotTable", "com/frank/pivot/PivotValue"], func
 | `dataReceived` | `recordCount`, `truncated` (modo OData V4) |
 | `updateFinished` | `rowCount`, `columnCount`, `truncated` |
 | `loadError` | `message` |
+| `variantSelect` | `key`, `name`, `configuration`: el usuario eligió una vista (también *Estándar*) |
+| `variantSave` | `key`, `name`, `public`, `overwrite`: se guardó una vista |
 
 Con `rowFilters` y `columnFilters` se puede navegar al detalle de la celda (drill-down):
 
@@ -151,13 +157,17 @@ onCellPress: function (oEvent) {
 | Método | Descripción |
 |---|---|
 | `refresh()` | Fuerza el recálculo (necesario si se modifica en sitio el array de `records`) |
-| `getConfiguration()` / `setConfiguration(o)` | Leen y aplican la configuración serializable (filas, columnas, valores, filtros, colores, totales, jerarquía), útil para variantes |
+| `getConfiguration()` / `setConfiguration(o)` | Leen y aplican la configuración serializable (filas, columnas, valores, filtros, colores, totales, jerarquía, nivel de expansión, etiquetas repetidas y tono). Es lo que guarda una vista |
 | `openColorRules()` | Abre directamente el diálogo de colores. Devuelve `Promise<reglas \| null>` |
 | `getDistinctValues(campo)` | Valores distintos y ordenados de un campo (máximo 1000) |
 | `openPersonalization()` | Abre el panel. Devuelve `Promise<config \| null>` |
 | `exportToSpreadsheet()` | Exporta a `.xlsx`. Devuelve `Promise` |
 | `getResult()` | Último resultado del motor (ver abajo) |
 | `getInnerTable()` | `sap.ui.table.Table` o `TreeTable` interna, para ajustes avanzados |
+| `saveVariant(nombre, opciones?)` | Guarda la configuración actual como vista. Opciones: `key` (sobrescribir), `public`, `default`. Devuelve `Promise<vista>` |
+| `applyVariant(clave)` | Aplica una vista guardada o la estándar (`PivotTable.STANDARD_VARIANT_KEY`). Devuelve `false` si no existe |
+| `getVariants()` / `getCurrentVariantKey()` | Vistas cargadas y clave de la seleccionada |
+| `setVariantStore(almacén)` / `getVariantStore()` | Almacén de vistas propio y almacén en uso (ver [Almacén propio](#almacén-propio)) |
 
 ## Colores de celdas
 
@@ -187,7 +197,182 @@ oPivot.setColorRules([
 | Texto | Se elige blanco u oscuro según el contraste con el fondo |
 | Colores admitidos | `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()` y nombres CSS. Cualquier otro valor se descarta |
 
-Las reglas forman parte de `getConfiguration()`, así que se guardan con las variantes. Cambiar solo los colores reconstruye las columnas sin recalcular los datos. La exportación a Excel no incluye los colores.
+Las reglas forman parte de `getConfiguration()`, así que se guardan con las [vistas](#vistas-guardadas). Cambiar solo los colores reconstruye las columnas sin recalcular los datos. La exportación a Excel no incluye los colores.
+
+## Vistas guardadas
+
+Con `variantManagement="true"` aparece, junto al título de la barra, el selector de vistas estándar de Fiori (`sap.m.VariantManagement`). Desde él el usuario puede:
+
+- **Guardar** los cambios de la vista actual. Si hay cambios sin guardar, el nombre de la vista muestra un asterisco (*).
+- **Guardar como** una vista nueva, opcionalmente como vista por defecto y, si el almacén lo admite, como **pública** (compartida).
+- **Gestionar** sus vistas: renombrar, borrar y elegir la vista por defecto.
+
+La vista **Estándar** es la configuración inicial de la tabla (la del XML o el código) y no se puede borrar. Una vista guarda lo mismo que `getConfiguration()`: filas, columnas, valores, filtros, colores, subtotales, totales, vista jerárquica, nivel de expansión, etiquetas repetidas y tono de los colores. No guarda los datos.
+
+```xml
+<pv:PivotTable records="{/Ventas}" rows="Region" columns="Anio"
+    variantManagement="true" persistencyKey="ventas.pivotRegion"
+    variantSelect=".onVariantSelect">
+```
+
+`persistencyKey` es obligatorio: identifica las vistas de esa tabla y debe ser único por app y tabla. Si cambia, los usuarios dejan de ver las vistas guardadas con la clave anterior.
+
+Al cargar la tabla se aplica la vista por defecto del usuario **antes** del primer cálculo, de modo que en modo OData V4 no se leen los datos dos veces.
+
+### Dónde se guardan
+
+| Configuración | Almacén | Vistas |
+|---|---|---|
+| Sin `variantEntitySet`, dentro del Launchpad (SAP Build Work Zone) | `UshellPersonalizationStore`: servicio de personalización del Launchpad | Personales, por usuario y disponibles en cualquier dispositivo. No requiere desarrollo en el servidor |
+| Sin `variantEntitySet`, fuera del Launchpad (`npm start`, `ui5 serve`) | `LocalStorageStore`: almacenamiento del navegador | Personales, solo en ese navegador. Para desarrollo y pruebas |
+| Con `variantEntitySet` | `ODataV4Store`: servicio OData V4 propio (p. ej. CAP) | Personales y **públicas**. La vista por defecto de cada usuario se sigue guardando en el almacén personal |
+| `setVariantStore(oStore)` | Almacén propio | Las que implemente (ver [Almacén propio](#almacén-propio)) |
+
+Una vista compartida la crea otro usuario, así que antes de aplicarla se valida: se descartan claves desconocidas, tipos incorrectos y colores inseguros. Si la vista usa campos que ya no existen en los datos, se omiten esos campos y se avisa al usuario.
+
+### Vistas compartidas con CAP
+
+La librería no incluye código de servidor. Esta es la estructura que espera `ODataV4Store`; créala en tu proyecto CAP y adapta los permisos a tus roles.
+
+**`db/pivot-views.cds`**
+
+```cds
+namespace app.pivot;
+using { cuid, managed } from '@sap/cds/common';
+
+entity PivotViews : cuid, managed {          // ID, createdBy, createdAt, modifiedBy, modifiedAt
+  persistencyKey : String(120) not null;     // persistencyKey de la tabla
+  name           : String(120) not null;
+  isPublic       : Boolean default false;    // false = personal, true = compartida
+  schemaVersion  : Integer default 1;        // versión del formato de configuration
+  configuration  : LargeString not null;     // JSON de getConfiguration()
+}
+```
+
+**`srv/pivot-view-service.cds`**
+
+```cds
+using { app.pivot as db } from '../db/pivot-views';
+
+service PivotViewService @(path: '/pivot-views', requires: 'authenticated-user') {
+  @restrict: [
+    { grant: 'READ',               where: 'isPublic = true or createdBy = $user' },
+    { grant: 'CREATE' },
+    { grant: ['UPDATE', 'DELETE'], where: 'createdBy = $user' }
+    // p. ej. un rol que administra las vistas de todos: { grant: '*', to: 'PivotViewAdmin' }
+  ]
+  entity PivotViews as projection on db.PivotViews {
+    *,
+    virtual null as isOwner : Boolean       // opcional: oculta Guardar/Renombrar/Borrar en vistas ajenas
+  };
+}
+```
+
+**`srv/pivot-view-service.js`**
+
+```js
+const cds = require('@sap/cds');
+
+const MAX_CONFIGURATION = 100000; // caracteres
+
+module.exports = cds.service.impl(function () {
+  const { PivotViews } = this.entities;
+
+  this.after('READ', PivotViews, (result, req) => {
+    for (const row of [].concat(result || [])) {
+      row.isOwner = row.createdBy === req.user.id;
+    }
+  });
+
+  this.before(['CREATE', 'UPDATE'], PivotViews, (req) => {
+    const { configuration } = req.data;
+    if (configuration === undefined) return;
+    if (configuration.length > MAX_CONFIGURATION) return req.reject(400, 'La vista es demasiado grande');
+    try {
+      JSON.parse(configuration);
+    } catch (e) {
+      return req.reject(400, 'La configuración de la vista no es JSON válido');
+    }
+    // Opcional: solo un rol puede publicar vistas
+    // if (req.data.isPublic && !req.user.is('PivotViewPublisher')) return req.reject(403, 'No puede publicar vistas');
+  });
+});
+```
+
+Si usas roles, decláralos en el `xs-security.json` del proyecto CAP y asígnalos con colecciones de roles en el subaccount de BTP.
+
+**En la app Fiori**
+
+`webapp/manifest.json`: una fuente de datos y un modelo propios para las vistas. Usa `autoExpandSelect: false`, porque el almacén lee las entidades sin controles enlazados.
+
+```json
+"sap.app": {
+  "dataSources": {
+    "pivotViews": { "uri": "pivot-views/", "type": "OData", "settings": { "odataVersion": "4.0" } }
+  }
+},
+"sap.ui5": {
+  "models": {
+    "pivotViews": { "dataSource": "pivotViews", "settings": { "autoExpandSelect": false } }
+  }
+}
+```
+
+`xs-app.json`: la ruta hacia el destination del servicio CAP. El destination de BTP necesita `HTML5.ForwardAuthToken = true`, para que CAP reciba el usuario.
+
+```json
+{ "source": "^/pivot-views/(.*)$", "target": "/pivot-views/$1", "destination": "<destination-cap>", "authenticationType": "xsuaa" }
+```
+
+La vista XML:
+
+```xml
+<pv:PivotTable variantManagement="true" persistencyKey="ventas.pivotRegion"
+    variantModelName="pivotViews" variantEntitySet="/PivotViews" ... />
+```
+
+Peticiones que hace `ODataV4Store`:
+
+| Acción | Petición |
+|---|---|
+| Cargar | `GET /PivotViews?$filter=persistencyKey eq 'ventas.pivotRegion'&$orderby=name` |
+| Guardar como | `POST /PivotViews` con `{ persistencyKey, name, isPublic, schemaVersion, configuration }` (`configuration` es texto JSON) |
+| Guardar / renombrar | `PATCH /PivotViews(<ID>)` con `name`, `isPublic`, `schemaVersion` y `configuration` |
+| Borrar | `DELETE /PivotViews(<ID>)` |
+
+Las peticiones se envían en `$batch` con un grupo propio (`pivotViews`). Si el servicio rechaza una operación (por ejemplo, un 403 por permisos), el cambio se descarta y el usuario ve un mensaje de error.
+
+### Almacén propio
+
+Para otra estructura, otros nombres de campo u otro backend, pasa a la tabla un objeto con esta interfaz. Todos los métodos devuelven promesas:
+
+```js
+oPivot.setVariantStore({
+	supportsPublic: true, // muestra la casilla "Pública"
+	load: function (sPersistencyKey) {
+		// -> { variants: [vista, ...], defaultKey: "clave" | null }
+	},
+	save: function (sPersistencyKey, oView) {
+		// oView.key vacío = vista nueva. Devuelve la vista guardada, con su key
+	},
+	remove: function (sPersistencyKey, sKey) {},
+	setDefault: function (sPersistencyKey, sKey) {} // sKey null = Estándar
+});
+```
+
+Una vista es:
+
+```js
+{
+	key: "42",
+	name: "Ventas por región 2025",
+	public: false,
+	author: "ana@empresa.com",   // se muestra en "Gestionar"
+	editable: true,              // false: el usuario no puede sobrescribir, renombrar ni borrar
+	schemaVersion: 1,
+	configuration: { rows: [...], columns: [...], values: [...], ... } // getConfiguration()
+}
+```
 
 ## PivotValue
 
