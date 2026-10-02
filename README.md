@@ -62,7 +62,7 @@ builder:
           - com.frank.pivot   # nombre UI5 (metadata.name de ui5.yaml), no el nombre npm
 ```
 
-Tras el build, `dist/resources/com/frank/pivot/` debe contener `library-preload.js`, `css/PivotTable.css` y `engine/PivotWorker.js` (el worker se carga aparte, no va en el preload).
+Tras el build, `dist/resources/com/frank/pivot/` debe contener `library-preload.js`, `css/PivotTable.css` y `engine/PivotWorker.js` (el worker se carga aparte, no va en el preload, y a su vez carga `engine/Formula.js`, `Aggregations.js`, `CalculatedFields.js` y `PivotEngine.js`).
 
 ## Versionado
 
@@ -379,7 +379,7 @@ Una vista es:
 | Propiedad | Tipo | Defecto | Descripción |
 |---|---|---|---|
 | `field` | `string` | | Campo a agregar. Con `Count` se admite `*` (cuenta todos los registros) |
-| `aggregationType` | `AggregationType` | `Sum` | `Sum`, `Count`, `CountDistinct`, `Average`, `Min`, `Max` |
+| `aggregationType` | `AggregationType` | `Sum` | `Sum`, `Count`, `CountDistinct`, `Average`, `Min`, `Max`, `Formula` (campos calculados `Aggregate`, ver [Campos calculados](#campos-calculados)) |
 | `label` | `string` | | Cabecera. Por defecto: etiqueta del campo, más la agregación si no es `Sum` |
 | `format` | `ValueFormat` | `Number` | `Number`, `Integer`, `Currency`, `Percent` (el valor debe ser una fracción: 0,2 = 20 %) |
 | `decimals` | `int` | `-1` | Número de decimales. `-1` = automático |
@@ -393,6 +393,59 @@ Una vista es:
 | `label` | `string` | | Etiqueta visible |
 | `sortOrder` | `sap.ui.core.SortOrder` | `Ascending` | `Ascending`, `Descending` o `None` (orden de aparición) |
 | `measure` | `boolean` | `false` | Si el campo es numérico: en el panel se agrega por defecto con `Sum` en lugar de `Count` |
+| `formula` | `string` | | Fórmula de un campo calculado, p. ej. `"{Utilidad} / {Ventas}"`. Vacío = campo normal |
+| `calculationLevel` | `CalculationLevel` | `Aggregate` | `Aggregate` (fórmula sobre las sumas de cada celda) o `Record` (fórmula en cada registro antes de agrupar) |
+
+## Campos calculados
+
+Un `PivotField` con `formula` es un campo calculado. Las referencias `{campo}` son nombres de otros campos (de los registros o calculados); el nombre admite cualquier carácter excepto `{` y `}`.
+
+```js
+new PivotTable({
+	records: aVentas,
+	rows: ["Region", "Producto"],
+	fields: [
+		new PivotField({ name: "Utilidad", label: "Utilidad", formula: "{Ventas} - {Costo}", calculationLevel: "Record" }),
+		new PivotField({ name: "Margen", label: "Margen %", formula: "{Utilidad} / {Ventas}" }),   // Aggregate
+		new PivotField({ name: "PrecioMedio", label: "Precio medio", formula: "{Ventas} / {Unidades}" })
+	],
+	values: [
+		new PivotValue({ field: "Utilidad" }),
+		new PivotValue({ field: "Margen", aggregationType: "Formula", format: "Percent", decimals: 1 }),
+		new PivotValue({ field: "PrecioMedio", aggregationType: "Formula", decimals: 2 })
+	]
+});
+```
+
+| Región | Producto | Ventas | Costo | Unidades | Utilidad | Margen % | Precio medio |
+|---|---|---|---|---|---|---|---|
+| Norte | Laptop | 10000 | 8500 | 10 | 1500 | 15,0 % | 1000,00 |
+| Norte | Teclado | 1000 | 500 | 50 | 500 | 50,0 % | 20,00 |
+| **Total Norte** | | | | | **2000** | **18,2 %** | **183,33** |
+
+El margen del total es `Sum(Utilidad) / Sum(Ventas)` = 2000 / 11000, no el promedio de los márgenes (32,5 %).
+
+**Niveles de cálculo** (`calculationLevel`):
+
+- **`Aggregate`** (por defecto): en cada celda, subtotal y total se suman los operandos y después se aplica la fórmula. Un `PivotValue` sobre este campo usa siempre `aggregationType: "Formula"`; si indica otra agregación se normaliza y se registra un `Log.warning`.
+- **`Record`**: la fórmula se aplica a cada registro antes de agrupar (sobre copias: los datos originales no se modifican). Después el campo se comporta como un campo numérico más: admite cualquier agregación y puede usarse como dimensión o filtro.
+
+**Fórmulas anidadas**: un `Aggregate` puede usar otro `Aggregate` (se sustituye su fórmula) o un `Record` (el operando es la suma del campo derivado). Un `Record` no puede usar un `Aggregate`.
+
+**Sintaxis**: `+ - * /`, paréntesis, `SI(condición; si_verdadero; si_falso)`, `MIN`, `MAX`, `ABS`, `REDONDEAR(valor; decimales)`; `;` separa argumentos; `,` o `.` como decimal; las comparaciones (`> < >= <= = <>`) solo dentro de `SI`. Un operando vacío o una división por cero dan una celda vacía. El parser está en `engine/Formula.js` (sin dependencias de UI5; también se carga con `require()` en Node).
+
+**Errores de configuración** (fórmula inválida, ciclo, referencia a un campo inexistente, `Record` que usa un `Aggregate`): se registra un `Log.error` con el nombre del campo, las celdas de ese valor quedan vacías y el resto de la tabla se calcula con normalidad. Los campos que dependen de uno con errores también quedan vacíos. Los mismos mensajes están en `getResult().issues`.
+
+**En XML** las llaves se interpretan como *binding*: enlace la fórmula a un modelo (`formula="{modelo>formula}"`) o escápelas (`formula="\{Ventas\} - \{Costo\}"`). En JavaScript, una fórmula pasada como texto al constructor se toma literalmente; para enlazarla use la forma objeto (`formula: { path: "modelo>formula" }`).
+
+**Web Worker**: las fórmulas viajan como texto y se parsean dentro del worker; el resultado es idéntico al del hilo principal.
+
+### Limitaciones en modo `ODataV4`
+
+- Los operandos de los campos `Aggregate` se piden en `$apply` como `sum` con alias propios (`pv<i>_f<k>`), aunque no sean valores visibles. Por eso los operandos deben ser propiedades numéricas que el backend pueda sumar.
+- Los campos `Record` no se admiten: se registra un `Log.warning` y sus celdas quedan vacías, igual que las de un `Aggregate` que use un `Record`. Como dimensión o filtro se omiten del `$apply` (el backend no los conoce).
+- Las referencias se validan con los metadatos del EntitySet. Si no se pueden leer, una referencia a una propiedad inexistente hará que el backend rechace el `$apply`.
+
 
 ## Resultado del motor (`getResult()`)
 
@@ -409,7 +462,8 @@ Una vista es:
   }],
   rows: [{ __type, __level, __rowKeys: ["EMEA", "España"], d0: "EMEA", d1: "España", v0: 1234.5 }],
   tree: [{ label, __type, __level, __rowKeys, v0, nodes: [...] }] | null,
-  recordCount, usedRecordCount, totalColumns, truncated
+  recordCount, usedRecordCount, totalColumns, truncated,
+  issues: [{ type: "error" | "warning", field, label, message }]  // solo si hay campos calculados
 }
 ```
 
@@ -418,7 +472,8 @@ Una vista es:
 ```js
 PivotEngine.compute(aRecords, {
 	rows: ["Region"], columns: [{ name: "Anio", sortOrder: "desc" }],
-	values: [{ field: "Importe", aggregation: "sum" }],
+	values: [{ field: "Importe", aggregation: "sum" }, { field: "Margen", aggregation: "formula" }],
+	calculatedFields: { Margen: { formula: "{Utilidad} / {Importe}", level: "aggregate" } }, // "aggregate" | "record"
 	showSubtotals: true, showGrandTotals: true, hierarchical: false, maxColumns: 500
 });
 ```
@@ -426,7 +481,7 @@ PivotEngine.compute(aRecords, {
 ## Desarrollo
 
 ```bash
-npm test            # pruebas del motor en Node (sin navegador)
+npm test            # pruebas del motor en Node (sin navegador) y comparación Web Worker / hilo principal
 npm start           # ui5 serve + suite QUnit en el navegador
 npm run build       # dist/ con library-preload.js, minificado y manifest.json
 npm pack --dry-run  # lista los archivos que se publican en el paquete

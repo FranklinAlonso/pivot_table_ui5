@@ -16,7 +16,9 @@ const ROOTS = {
 	"com/frank/pivot/": path.join(ROOT, "src/com/frank/pivot/")
 };
 const TESTS = [
+	"com/frank/pivot/test/engine/Formula.qunit",
 	"com/frank/pivot/test/engine/PivotEngine.qunit",
+	"com/frank/pivot/test/engine/CalculatedFields.qunit",
 	"com/frank/pivot/test/provider/ApplyBuilder.qunit",
 	"com/frank/pivot/test/table/ColorRules.qunit",
 	"com/frank/pivot/test/export/PivotLayout.qunit",

@@ -4,13 +4,13 @@
  * Módulo sin dependencias de UI5 (solo usa sap.ui.define como envoltorio AMD)
  * para poder ejecutarse también dentro de un Web Worker y en Node.js.
  */
-sap.ui.define([], function () {
+sap.ui.define(["./Formula"], function (Formula) {
 	"use strict";
 
 	/** Alias usado en $apply para el número de registros agrupados (modo servidor). */
 	var COUNT_ALIAS = "pv__count";
 
-	var SUPPORTED = ["sum", "count", "countdistinct", "avg", "min", "max"];
+	var SUPPORTED = ["sum", "count", "countdistinct", "avg", "min", "max", "formula"];
 
 	function toNumber(v) {
 		if (v === null || v === undefined || v === "") {
@@ -28,10 +28,23 @@ sap.ui.define([], function () {
 		return "pv" + iIndex;
 	}
 
+	/** Alias en $apply de la suma del operando k de un valor de fórmula (modo servidor). */
+	function operandAlias(iIndex, k) {
+		return aliasFor(iIndex) + "_f" + k;
+	}
+
+	/** Acumulador de un valor que no puede calcularse (p. ej. fórmula con errores): siempre null. */
+	var NULL_ACCUMULATOR = {
+		init: function () { return null; },
+		add: function () {},
+		result: function () { return null; }
+	};
+
 	/**
 	 * Crea un acumulador para un valor configurado.
 	 *
-	 * @param {object} oValue Especificación del valor ({field, aggregation})
+	 * @param {object} oValue Especificación del valor ({field, aggregation}). Con aggregation "formula"
+	 *   lleva además tree y operands (ver CalculatedFields.prepare); con invalid = true las celdas son null.
 	 * @param {int} iIndex Posición del valor (para los alias en modo servidor)
 	 * @param {boolean} bPreAggregated Si los registros ya vienen agregados del backend
 	 * @returns {{init: function():object, add: function(object, object), result: function(object):number|null}}
@@ -42,6 +55,12 @@ sap.ui.define([], function () {
 		var sField = oValue.field;
 		if (SUPPORTED.indexOf(sAgg) < 0) {
 			throw new Error("Agregación no soportada: " + oValue.aggregation);
+		}
+		if (oValue.invalid || (sAgg === "formula" && !oValue.tree)) {
+			return NULL_ACCUMULATOR;
+		}
+		if (sAgg === "formula") {
+			return createFormula(oValue.tree, oValue.operands || [], iIndex, bPreAggregated);
 		}
 		return bPreAggregated ? createPreAggregated(sAgg, aliasFor(iIndex)) : createRaw(sAgg, sField);
 	}
@@ -142,10 +161,44 @@ sap.ui.define([], function () {
 		}
 	}
 
+	/*
+	 * Fórmula sobre agregados: un acumulador sum por operando y la fórmula se evalúa
+	 * sobre las sumas en result(). Así un subtotal de Utilidad / Ventas es
+	 * Sum(Utilidad) / Sum(Ventas), no la suma ni el promedio de los cocientes.
+	 */
+	function createFormula(oTree, aOperands, iIndex, bPreAggregated) {
+		var mIndex = {};
+		var aSums = aOperands.map(function (sOperand, k) {
+			mIndex[sOperand] = k;
+			return bPreAggregated ? createPreAggregated("sum", operandAlias(iIndex, k)) : createRaw("sum", sOperand);
+		});
+		var K = aSums.length;
+		return {
+			init: function () {
+				return aSums.map(function (oSum) {
+					return oSum.init();
+				});
+			},
+			add: function (a, oRec) {
+				for (var k = 0; k < K; k++) {
+					aSums[k].add(a[k], oRec);
+				}
+			},
+			result: function (a) {
+				var v = Formula.evaluar(oTree, function (sId) {
+					var k = mIndex[sId];
+					return k === undefined ? null : aSums[k].result(a[k]);
+				});
+				return typeof v === "number" && isFinite(v) ? v : null;
+			}
+		};
+	}
+
 	return {
 		COUNT_ALIAS: COUNT_ALIAS,
 		SUPPORTED: SUPPORTED,
 		aliasFor: aliasFor,
+		operandAlias: operandAlias,
 		toNumber: toNumber,
 		create: create
 	};

@@ -23,6 +23,20 @@ sap.ui.define([
 		},
 
 		load: function (oConfig) {
+			var that = this;
+			var bCalculated = !!oConfig.calculatedFields && Object.keys(oConfig.calculatedFields).length > 0;
+			if (!bCalculated) {
+				return this._load(oConfig, null);
+			}
+			// Con campos calculados se leen antes los metadatos: una fórmula que referencia una propiedad
+			// inexistente se marca como error (celdas vacías) en lugar de hacer fallar todo el $apply
+			return this._requestKnownFields().then(function (aKnownFields) {
+				return that._load(aKnownFields ? Object.assign({}, oConfig, { knownFields: aKnownFields }) : oConfig,
+					aKnownFields);
+			});
+		},
+
+		_load: function (oConfig, aKnownFields) {
 			var sApply;
 			try {
 				sApply = ApplyBuilder.build(oConfig);
@@ -39,9 +53,34 @@ sap.ui.define([
 				var aRecords = aContexts.map(function (oContext) {
 					return oContext.getObject();
 				});
-				return { records: aRecords, preAggregated: true, truncated: aRecords.length >= iMax, apply: sApply };
+				return {
+					records: aRecords,
+					preAggregated: true,
+					truncated: aRecords.length >= iMax,
+					apply: sApply,
+					knownFields: aKnownFields
+				};
 			}).finally(function () {
 				oBinding.destroy();
+			});
+		},
+
+		/**
+		 * Propiedades del tipo del EntitySet, o null si no se pueden leer los metadatos.
+		 * @returns {Promise<string[]|null>} Nombres de las propiedades
+		 * @private
+		 */
+		_requestKnownFields: function () {
+			var oMetaModel = this._oModel && this._oModel.getMetaModel && this._oModel.getMetaModel();
+			if (!oMetaModel || !oMetaModel.requestObject || !this._sPath) {
+				return Promise.resolve(null);
+			}
+			return Promise.resolve(oMetaModel.requestObject(this._sPath + "/")).then(function (oType) {
+				return oType ? Object.keys(oType).filter(function (sName) {
+					return oType[sName] && oType[sName].$kind === "Property";
+				}) : null;
+			}, function () {
+				return null;
 			});
 		}
 	});

@@ -74,6 +74,22 @@ sap.ui.define([
 		assert.deepEqual(oResult.droppedFields, ["Coste"]);
 	});
 
+	QUnit.test("sanitize conserva Formula y descarta valores de campos calculados eliminados", function (assert) {
+		var oSaved = JSON.parse(JSON.stringify({
+			values: [
+				{ field: "Margen", aggregationType: "Formula", format: "Percent", decimals: 1 },
+				{ field: "Borrado", aggregationType: "Formula" },
+				{ field: "Ventas", aggregationType: "Sum" }
+			]
+		}));
+		var oResult = ViewFormat.sanitize(oSaved, ["Margen", "Ventas"]);
+		assert.deepEqual(oResult.configuration.values, [
+			{ field: "Margen", aggregationType: "Formula", format: "Percent", decimals: 1 },
+			{ field: "Ventas", aggregationType: "Sum" }
+		], "el valor del campo que ya no existe se ignora");
+		assert.deepEqual(oResult.droppedFields, ["Borrado"]);
+	});
+
 	QUnit.test("sanitize solo incluye las claves presentes", function (assert) {
 		assert.deepEqual(ViewFormat.sanitize({ rows: ["A"] }).configuration, { rows: ["A"] });
 		assert.deepEqual(ViewFormat.sanitize({ filters: null, colorRules: null }).configuration, { filters: null, colorRules: [] });

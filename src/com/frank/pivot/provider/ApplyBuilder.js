@@ -4,7 +4,10 @@
  *
  * Módulo sin dependencias de UI5 (probado también en Node.js).
  */
-sap.ui.define(["../engine/Aggregations"], function (Aggregations) {
+sap.ui.define([
+	"../engine/Aggregations",
+	"../engine/CalculatedFields"
+], function (Aggregations, CalculatedFields) {
 	"use strict";
 
 	function literal(vValue) {
@@ -37,22 +40,36 @@ sap.ui.define(["../engine/Aggregations"], function (Aggregations) {
 	}
 
 	/**
-	 * @param {object} oConfig Configuración del motor (rows, columns, values, filters)
+	 * Campos calculados (ver CalculatedFields): los aggregate piden la suma de cada operando con
+	 * el alias pv<i>_f<k>, aunque el operando no sea un valor visible. Los record no existen en el
+	 * backend: sus valores no piden nada (el motor deja las celdas en null) y se omiten como
+	 * dimensión o filtro.
+	 *
+	 * @param {object} oConfig Configuración del motor (rows, columns, values, filters,
+	 *   calculatedFields, knownFields)
 	 * @returns {string} Valor para $apply
 	 */
 	function build(oConfig) {
+		var oCalc = CalculatedFields.prepare(Object.assign({}, oConfig, { preAggregated: true }));
+		function isBackendField(sName) {
+			return oCalc.calculatedNames.indexOf(sName) < 0;
+		}
+
 		var aDims = [];
 		(oConfig.rows || []).concat(oConfig.columns || []).map(dimensionName).forEach(function (sDim) {
-			if (aDims.indexOf(sDim) < 0) {
+			if (aDims.indexOf(sDim) < 0 && isBackendField(sDim)) {
 				aDims.push(sDim);
 			}
 		});
 
 		var aAggregates = [];
 		var bCount = false;
-		(oConfig.values || []).forEach(function (oValue, i) {
-			var sAgg = String(oValue.aggregation || "sum").toLowerCase();
+		oCalc.values.forEach(function (oValue, i) {
+			var sAgg = oValue.aggregation;
 			var sAlias = Aggregations.aliasFor(i);
+			if (oValue.invalid) {
+				return;
+			}
 			switch (sAgg) {
 				case "sum":
 				case "min":
@@ -66,6 +83,11 @@ sap.ui.define(["../engine/Aggregations"], function (Aggregations) {
 				case "count":
 					bCount = true;
 					break;
+				case "formula":
+					oValue.operands.forEach(function (sOperand, k) {
+						aAggregates.push(sOperand + " with sum as " + Aggregations.operandAlias(i, k));
+					});
+					break;
 				default:
 					throw new Error("La agregación '" + sAgg + "' no está soportada en modo OData V4 (no es re-agregable)");
 			}
@@ -74,7 +96,12 @@ sap.ui.define(["../engine/Aggregations"], function (Aggregations) {
 			aAggregates.push("$count as " + Aggregations.COUNT_ALIAS);
 		}
 
-		var sFilter = buildFilter(oConfig.filters);
+		var mFilters = null;
+		Object.keys(oConfig.filters || {}).filter(isBackendField).forEach(function (sField) {
+			mFilters = mFilters || {};
+			mFilters[sField] = oConfig.filters[sField];
+		});
+		var sFilter = buildFilter(mFilters);
 		var sApply = sFilter ? "filter(" + sFilter + ")/" : "";
 		if (aDims.length) {
 			sApply += "groupby((" + aDims.join(",") + ")" +

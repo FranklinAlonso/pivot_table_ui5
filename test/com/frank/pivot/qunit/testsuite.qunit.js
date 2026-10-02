@@ -19,7 +19,9 @@ sap.ui.define(function () {
 			autostart: true
 		},
 		tests: {
+			"engine/Formula": { title: "Fórmulas" },
 			"engine/PivotEngine": { title: "Motor pivote" },
+			"engine/CalculatedFields": { title: "Campos calculados" },
 			"provider/ApplyBuilder": { title: "Generación de $apply" },
 			"provider/ODataV4Provider": { title: "Proveedor OData V4" },
 			"panel/FieldPanel": { title: "Panel de campos" },

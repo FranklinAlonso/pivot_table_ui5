@@ -20,7 +20,7 @@
   "scripts": {
     "start": "ui5 serve --open /test-resources/com/frank/pivot/qunit/testsuite.qunit.html",
     "build": "ui5 build --clean-dest --dest dist",
-    "test": "node test-node/run-qunit.mjs",
+    "test": "node test-node/run-qunit.mjs && node test-node/worker-parity.mjs",
     "prepublishOnly": "npm test"
   },
   "devDependencies": {

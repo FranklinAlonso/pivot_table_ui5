@@ -2,6 +2,19 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y [versionado semántico](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Añadido
+
+- Campos calculados: propiedades `formula` y `calculationLevel` (`Aggregate` | `Record`) de `PivotField`, agregación `Formula` y enum `CalculationLevel`. En los `Aggregate` se suman los operandos en cada celda, subtotal y total y después se aplica la fórmula (Margen = Sum(Utilidad) / Sum(Ventas)); los `Record` se calculan por registro, sobre copias, antes de agrupar.
+- `engine/Formula.js`: parser y evaluador de fórmulas sin dependencias (UMD), compatible con las copias de EPM_ADMIN y CAP. Las referencias `{...}` admiten cualquier carácter excepto llaves.
+- Validación de fórmulas (sintaxis, ciclos, referencias inexistentes, `Record` que usa un `Aggregate`): `Log.error` con el nombre del campo y celdas vacías, sin romper la tabla. Los avisos también se devuelven en `getResult().issues`.
+- Modo `ODataV4`: los operandos de los `Aggregate` se piden en `$apply` como `sum` con alias propios; las referencias se validan con los metadatos. Los campos `Record` no se admiten en este modo (`Log.warning`, celdas vacías).
+- Panel de campos: icono de campo calculado y agregación bloqueada en «Fórmula» para los `Aggregate`.
+- Las vistas guardadas conservan `aggregationType: "Formula"`.
+- `PivotField#formula` pasada como texto al constructor se toma literalmente (UI5 la interpretaría como *binding*); en XML las llaves se escapan (`\{Ventas\}`) o la fórmula se enlaza a un modelo.
+- `npm test` compara el resultado del Web Worker con el del hilo principal.
+
 ## [1.2.0] - 2026-10-01
 
 ### Cambiado

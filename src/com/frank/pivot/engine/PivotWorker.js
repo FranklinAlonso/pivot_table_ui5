@@ -1,8 +1,10 @@
 /*!
  * com.frank.pivot - Web Worker del motor pivote.
  *
- * Carga Aggregations.js y PivotEngine.js (módulos AMD sin dependencias de UI5)
- * con un sap.ui.define mínimo y calcula el pivote fuera del hilo principal.
+ * Carga Formula.js, Aggregations.js, CalculatedFields.js y PivotEngine.js (módulos
+ * AMD sin dependencias de UI5) con un sap.ui.define mínimo y calcula el pivote fuera
+ * del hilo principal. postMessage no admite funciones: las fórmulas de los campos
+ * calculados llegan como texto en config.calculatedFields y se parsean aquí.
  * No es un módulo UI5: se excluye de library-preload (ver ui5.yaml).
  */
 /* global importScripts */
@@ -31,7 +33,10 @@
 		importScripts(sName + ".js");
 	}
 
+	// En orden de dependencias
+	load("Formula");
 	load("Aggregations");
+	load("CalculatedFields");
 	load("PivotEngine");
 
 	self.onmessage = function (oEvent) {

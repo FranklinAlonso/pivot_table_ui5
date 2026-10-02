@@ -9,7 +9,7 @@
  * No depende de UI5: el resultado es JSON serializable, así que puede calcularse
  * en un Web Worker (ver PivotWorker.js) y probarse en Node.js.
  */
-sap.ui.define(["./Aggregations"], function (Aggregations) {
+sap.ui.define(["./Aggregations", "./CalculatedFields"], function (Aggregations, CalculatedFields) {
 	"use strict";
 
 	var KEY_SEP = "\u0001";
@@ -86,6 +86,8 @@ sap.ui.define(["./Aggregations"], function (Aggregations) {
 			repeatRowLabels: !!oCfg.repeatRowLabels,
 			maxColumns: oCfg.maxColumns > 0 ? oCfg.maxColumns : 500,
 			preAggregated: !!oCfg.preAggregated,
+			calculatedFields: oCfg.calculatedFields || null,
+			knownFields: Array.isArray(oCfg.knownFields) ? oCfg.knownFields : null,
 			texts: Object.assign({}, DEFAULT_TEXTS, oCfg.texts)
 		};
 	}
@@ -139,7 +141,10 @@ sap.ui.define(["./Aggregations"], function (Aggregations) {
 	 * @param {object[]} aRecords Registros planos
 	 * @param {object} oConfig Configuración:
 	 *   rows / columns: string[] | {name, label, sortOrder: "asc"|"desc"|"none"}[]
-	 *   values: {field, aggregation: "sum"|"count"|"countdistinct"|"avg"|"min"|"max", label}[]
+	 *   values: {field, aggregation: "sum"|"count"|"countdistinct"|"avg"|"min"|"max"|"formula", label}[]
+	 *   calculatedFields: {campo: {formula: "{a} / {b}", level: "aggregate"|"record", label}} (texto:
+	 *     se parsea aquí, también dentro del Web Worker)
+	 *   knownFields: string[] campos existentes (opcional; para validar las referencias de las fórmulas)
 	 *   filters: {campo: valoresPermitidos[]}
 	 *   showSubtotals, showGrandTotals, hierarchical, repeatRowLabels: boolean
 	 *   maxColumns: int, preAggregated: boolean, texts: {total, grandTotal, empty}
@@ -147,9 +152,10 @@ sap.ui.define(["./Aggregations"], function (Aggregations) {
 	 */
 	function compute(aRecords, oConfig) {
 		var oCfg = normalizeConfig(oConfig);
+		var oCalc = CalculatedFields.prepare(oCfg, aRecords);
 		var aRowDims = oCfg.rows;
 		var aColDims = oCfg.columns;
-		var aValues = oCfg.values;
+		var aValues = oCalc.values;
 		var R = aRowDims.length;
 		var C = aColDims.length;
 		var V = aValues.length;
@@ -174,12 +180,20 @@ sap.ui.define(["./Aggregations"], function (Aggregations) {
 		var oColRoot = createNode(null, null, oTexts);
 		var mCells = new Map();
 		var fnFilter = oCfg.preAggregated ? null : createFilter(oCfg.filters);
+		// Campos calculados por registro: se calculan sobre copias, nunca sobre los datos del proveedor
+		var fnDerive = oCalc.recordFields.length ? CalculatedFields.createDeriver(oCalc.recordFields) : null;
 		var iUsed = 0;
 		var aRowKeys = new Array(R + 1);
 		var aColKeys = new Array(C + 1);
 
 		(aRecords || []).forEach(function (oRec) {
-			if (!oRec || (fnFilter && !fnFilter(oRec))) {
+			if (!oRec) {
+				return;
+			}
+			if (fnDerive) {
+				oRec = fnDerive(oRec);
+			}
+			if (fnFilter && !fnFilter(oRec)) {
 				return;
 			}
 			iUsed++;
@@ -384,7 +398,7 @@ sap.ui.define(["./Aggregations"], function (Aggregations) {
 			}
 		}
 
-		return {
+		var oResult = {
 			rowDimensions: aRowDims.map(function (d) { return { name: d.name, label: d.label }; }),
 			columnDimensions: aColDims.map(function (d) { return { name: d.name, label: d.label }; }),
 			values: aValues.map(function (v) { return { field: v.field, aggregation: v.aggregation, label: v.label }; }),
@@ -400,6 +414,11 @@ sap.ui.define(["./Aggregations"], function (Aggregations) {
 			totalColumns: iTotalColumns,
 			truncated: bTruncated
 		};
+		if (oCalc.active) {
+			// Avisos y errores de los campos calculados (el control los registra con sap/base/Log)
+			oResult.issues = oCalc.issues;
+		}
+		return oResult;
 	}
 
 	return {

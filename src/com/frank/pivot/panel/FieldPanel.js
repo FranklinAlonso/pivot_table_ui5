@@ -23,11 +23,12 @@ sap.ui.define([
 	"sap/m/Title",
 	"sap/m/ActionSheet",
 	"sap/m/ToolbarSpacer",
+	"sap/ui/core/Icon",
 	"../library",
 	"./ColorRulesDialog"
 ], function (
 	Lib, JSONModel, DragInfo, DropInfo, Item, Dialog, Button, List, StandardListItem, CustomListItem,
-	HBox, VBox, FlexBox, Text, Select, CheckBox, Panel, Toolbar, Title, ActionSheet, ToolbarSpacer, library,
+	HBox, VBox, FlexBox, Text, Select, CheckBox, Panel, Toolbar, Title, ActionSheet, ToolbarSpacer, Icon, library,
 	ColorRulesDialog
 ) {
 	"use strict";
@@ -35,6 +36,8 @@ sap.ui.define([
 	var GROUP = "pvFields";
 	var TARGETS = ["available", "rows", "columns", "values"];
 	var AGGREGATION_TYPES = Object.keys(library.AggregationType);
+	var FORMULA = library.AggregationType.Formula;
+	var CALCULATED_ICON = "sap-icon://simulate";
 
 	function bundle() {
 		return Lib.getResourceBundleFor("com.frank.pivot");
@@ -44,21 +47,30 @@ sap.ui.define([
 	 * Lista de campos conocidos: PivotField, campos de la configuración actual y,
 	 * en modo Client, las claves del primer registro.
 	 * @param {com.frank.pivot.PivotTable} oPivot Tabla
-	 * @returns {object[]} Campos {name, label, measure}
+	 * @returns {object[]} Campos {name, label, measure, calculated, locked}. calculated = tiene fórmula;
+	 *   locked = calculado Aggregate (su agregación es siempre Formula)
 	 */
 	function collectFields(oPivot) {
 		var aFields = [];
 		var mSeen = {};
 
-		function add(sName, sLabel, bMeasure) {
+		function add(sName, sLabel, bMeasure, bCalculated, bLocked) {
 			if (sName && !mSeen[sName]) {
 				mSeen[sName] = true;
-				aFields.push({ name: sName, label: sLabel || sName, measure: !!bMeasure });
+				aFields.push({
+					name: sName,
+					label: sLabel || sName,
+					measure: !!bMeasure,
+					calculated: !!bCalculated,
+					locked: !!bLocked
+				});
 			}
 		}
 
 		oPivot.getFields().forEach(function (oField) {
-			add(oField.getName(), oField.getLabel(), oField.getMeasure());
+			var bCalculated = !!oField.getFormula().trim();
+			add(oField.getName(), oField.getLabel(), oField.getMeasure() || bCalculated, bCalculated,
+				bCalculated && oField.getCalculationLevel() !== "Record");
 		});
 		oPivot.getRows().concat(oPivot.getColumns()).forEach(function (sName) {
 			add(sName);
@@ -94,8 +106,9 @@ sap.ui.define([
 			rows: oConfig.rows.map(field),
 			columns: oConfig.columns.map(field),
 			values: oConfig.values.map(function (oValue) {
-				return Object.assign(field(oValue.field), {
-					aggregationType: oValue.aggregationType,
+				var oField = field(oValue.field);
+				return Object.assign(oField, {
+					aggregationType: aggregationFor(oField, oValue.aggregationType),
 					format: oValue.format,
 					decimals: oValue.decimals,
 					unit: oValue.unit,
@@ -106,6 +119,25 @@ sap.ui.define([
 			showSubtotals: oConfig.showSubtotals,
 			showGrandTotals: oConfig.showGrandTotals,
 			hierarchical: oConfig.hierarchical
+		};
+	}
+
+	/** Agregación válida para el campo: Formula solo (y siempre) en los calculados Aggregate. */
+	function aggregationFor(oField, sType) {
+		if (oField.locked) {
+			return FORMULA;
+		}
+		return !sType || sType === FORMULA ? (oField.measure ? "Sum" : "Count") : sType;
+	}
+
+	/** Propiedades del campo que se conservan al moverlo entre listas. */
+	function fieldInfo(oItem) {
+		return {
+			name: oItem.name,
+			label: oItem.label,
+			measure: oItem.measure,
+			calculated: !!oItem.calculated,
+			locked: !!oItem.locked
 		};
 	}
 
@@ -142,19 +174,16 @@ sap.ui.define([
 		} else if (sTarget === "values") {
 			if (sSource !== "available") {
 				aSource.splice(iSource, 1);
-				oState.available.push({ name: oItem.name, label: oItem.label, measure: oItem.measure });
+				oState.available.push(fieldInfo(oItem));
 			}
-			aTarget.splice(iInsert, 0, {
-				name: oItem.name,
-				label: oItem.label,
-				measure: oItem.measure,
-				aggregationType: oItem.measure ? "Sum" : "Count"
-			});
+			aTarget.splice(iInsert, 0, Object.assign(fieldInfo(oItem), {
+				aggregationType: aggregationFor(oItem)
+			}));
 		} else if (sSource === "values") {
 			aSource.splice(iSource, 1);
 			if (sTarget !== "available" && !isDimension(oItem.name)) {
 				removeFromAvailable(oItem.name);
-				aTarget.splice(iInsert, 0, { name: oItem.name, label: oItem.label, measure: oItem.measure });
+				aTarget.splice(iInsert, 0, fieldInfo(oItem));
 			}
 		} else {
 			aSource.splice(iSource, 1);
@@ -306,12 +335,35 @@ sap.ui.define([
 						justifyContent: "SpaceBetween",
 						width: "100%",
 						items: [
-							new Text({ text: "{panel>label}", tooltip: "{panel>name}", wrapping: false }).addStyleClass("sapUiSmallMarginBegin"),
+							new HBox({
+								alignItems: "Center",
+								items: [
+									new Icon({
+										src: CALCULATED_ICON,
+										visible: "{panel>calculated}",
+										tooltip: oBundle.getText("PANEL_CALCULATED")
+									}).addStyleClass("sapUiTinyMarginEnd"),
+									new Text({ text: "{panel>label}", tooltip: "{panel>name}", wrapping: false })
+								]
+							}).addStyleClass("sapUiSmallMarginBegin"),
 							new Select({
 								width: "9rem",
 								selectedKey: "{panel>aggregationType}",
+								// Calculados Aggregate: bloqueado en "Fórmula"; los demás no ofrecen "Fórmula"
+								// (sap.m.Select no muestra los elementos deshabilitados)
+								enabled: "{= !${panel>locked} }",
+								tooltip: {
+									path: "panel>locked",
+									formatter: function (bLocked) {
+										return bLocked ? oBundle.getText("PANEL_FORMULA_LOCKED") : "";
+									}
+								},
 								items: AGGREGATION_TYPES.map(function (sType) {
-									return new Item({ key: sType, text: oBundle.getText("PIVOT_AGG_" + sType.toUpperCase()) });
+									return new Item({
+										key: sType,
+										text: oBundle.getText("PIVOT_AGG_" + sType.toUpperCase()),
+										enabled: sType === FORMULA ? "{= !!${panel>locked} }" : "{= !${panel>locked} }"
+									});
 								})
 							}).addStyleClass("sapUiTinyMarginEnd")
 						]
@@ -321,7 +373,13 @@ sap.ui.define([
 				oTemplate = new StandardListItem({
 					title: "{panel>label}",
 					tooltip: "{panel>name}",
-					icon: "{= ${panel>measure} ? 'sap-icon://measure' : 'sap-icon://dimension' }"
+					icon: "{= ${panel>calculated} ? '" + CALCULATED_ICON + "' : (${panel>measure} ? 'sap-icon://measure' : 'sap-icon://dimension') }",
+					info: {
+						path: "panel>calculated",
+						formatter: function (bCalculated) {
+							return bCalculated ? oBundle.getText("PANEL_CALCULATED") : "";
+						}
+					}
 				});
 				if (sTarget === "available") {
 					oTemplate.setType("Active").attachPress(onAvailablePress);
@@ -406,6 +464,8 @@ sap.ui.define([
 		open: open,
 		/** @private expuestos para pruebas */
 		_moveField: moveField,
+		_collectFields: collectFields,
+		_createState: createState,
 		_stateToConfig: stateToConfig
 	};
 });

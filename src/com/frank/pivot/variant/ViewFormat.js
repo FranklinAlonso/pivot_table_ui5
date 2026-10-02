@@ -19,7 +19,7 @@ sap.ui.define([
 	var SCHEMA_VERSION = 1;
 
 	// Copias de los enums de library.js (este módulo no puede depender de UI5)
-	var AGGREGATION_TYPES = ["Sum", "Count", "CountDistinct", "Average", "Min", "Max"];
+	var AGGREGATION_TYPES = ["Sum", "Count", "CountDistinct", "Average", "Min", "Max", "Formula"];
 	var VALUE_FORMATS = ["Number", "Integer", "Currency", "Percent"];
 	var BOOLEAN_KEYS = ["showSubtotals", "showGrandTotals", "hierarchical", "repeatRowLabels"];
 	var MAX_SHADE_STEP = 0.45;

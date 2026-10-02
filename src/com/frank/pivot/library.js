@@ -26,7 +26,8 @@ sap.ui.define([
 		types: [
 			"com.frank.pivot.AggregationType",
 			"com.frank.pivot.ValueFormat",
-			"com.frank.pivot.DataMode"
+			"com.frank.pivot.DataMode",
+			"com.frank.pivot.CalculationLevel"
 		],
 		controls: ["com.frank.pivot.PivotTable"],
 		elements: ["com.frank.pivot.PivotValue", "com.frank.pivot.PivotField"],
@@ -45,7 +46,12 @@ sap.ui.define([
 		CountDistinct: "CountDistinct",
 		Average: "Average",
 		Min: "Min",
-		Max: "Max"
+		Max: "Max",
+		/**
+		 * Fórmula de un campo calculado con <code>calculationLevel</code> Aggregate: se suman los
+		 * operandos en cada celda, subtotal o total y después se aplica la fórmula.
+		 */
+		Formula: "Formula"
 	};
 
 	/**
@@ -72,7 +78,23 @@ sap.ui.define([
 		ODataV4: "ODataV4"
 	};
 
+	/**
+	 * Nivel al que se calcula la fórmula de un campo calculado (<code>PivotField#formula</code>).
+	 * @enum {string}
+	 * @public
+	 */
+	thisLib.CalculationLevel = {
+		/**
+		 * Se suman los operandos dentro de cada celda, subtotal o total y después se aplica la fórmula
+		 * (p. ej. Margen = Sum(Utilidad) / Sum(Ventas)). Sus valores usan siempre la agregación Formula.
+		 */
+		Aggregate: "Aggregate",
+		/** Se calcula en cada registro antes de agrupar; después admite cualquier agregación. */
+		Record: "Record"
+	};
+
 	DataType.registerEnum("com.frank.pivot.AggregationType", thisLib.AggregationType);
+	DataType.registerEnum("com.frank.pivot.CalculationLevel", thisLib.CalculationLevel);
 	DataType.registerEnum("com.frank.pivot.ValueFormat", thisLib.ValueFormat);
 	DataType.registerEnum("com.frank.pivot.DataMode", thisLib.DataMode);
 

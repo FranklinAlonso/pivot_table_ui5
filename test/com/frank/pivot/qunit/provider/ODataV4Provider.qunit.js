@@ -44,6 +44,40 @@ sap.ui.define([
 		});
 	});
 
+	QUnit.test("Campos calculados: operandos con alias propios y validación con los metadatos", function (assert) {
+		var mCapture = {};
+		var oModel = createFakeModel([{ Region: "Norte", pv0_f0: 11000, pv0_f1: 60 }], mCapture);
+		oModel.getMetaModel = function () {
+			return {
+				requestObject: function (sPath) {
+					mCapture.metaPath = sPath;
+					return Promise.resolve({
+						$kind: "EntityType",
+						Region: { $kind: "Property" },
+						Ventas: { $kind: "Property" },
+						Unidades: { $kind: "Property" },
+						to_Pais: { $kind: "NavigationProperty" }
+					});
+				}
+			};
+		};
+		var oProvider = new ODataV4Provider({ model: oModel, path: "/Ventas" });
+		return oProvider.load({
+			rows: ["Region"],
+			values: [{ field: "PrecioMedio", aggregation: "formula" }, { field: "Roto", aggregation: "formula" }],
+			calculatedFields: {
+				PrecioMedio: { formula: "{Ventas} / {Unidades}", level: "aggregate" },
+				Roto: { formula: "{Ventas} / {NoExiste}", level: "aggregate" }
+			}
+		}).then(function (oLoad) {
+			assert.strictEqual(mCapture.metaPath, "/Ventas/");
+			assert.strictEqual(mCapture.parameters.$apply,
+				"groupby((Region),aggregate(Ventas with sum as pv0_f0,Unidades with sum as pv0_f1))",
+				"el campo con una referencia inexistente no se pide al backend");
+			assert.deepEqual(oLoad.knownFields, ["Region", "Ventas", "Unidades"]);
+		});
+	});
+
 	QUnit.test("Rechaza agregaciones no re-agregables", function (assert) {
 		var oProvider = new ODataV4Provider({ model: createFakeModel([], {}), path: "/Ventas" });
 		return oProvider.load({ rows: ["Region"], values: [{ field: "Cliente", aggregation: "countdistinct" }] })

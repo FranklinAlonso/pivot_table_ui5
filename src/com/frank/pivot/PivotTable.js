@@ -47,7 +47,8 @@ sap.ui.define([
 		CountDistinct: "countdistinct",
 		Average: "avg",
 		Min: "min",
-		Max: "max"
+		Max: "max",
+		Formula: "formula"
 	};
 
 	function bundle() {
@@ -740,17 +741,35 @@ sap.ui.define([
 			};
 		}
 
+		// Campos calculados: la fórmula viaja como texto (se parsea en el motor, también en el Web Worker)
+		var mCalculated = null;
+		this.getFields().forEach(function (oField) {
+			if (oField.getFormula().trim()) {
+				mCalculated = mCalculated || {};
+				mCalculated[oField.getName()] = {
+					formula: oField.getFormula(),
+					level: oField.getCalculationLevel() === "Record" ? "record" : "aggregate",
+					label: oField.getLabel() || oField.getName()
+				};
+			}
+		});
+
 		var aValues = this.getValues().map(function (oValue) {
 			var sField = oValue.getField();
 			var sType = oValue.getAggregationType();
 			var oField = mFields[sField];
 			var sFieldLabel = (oField && oField.getLabel()) || sField;
-			var sLabel = oValue.getLabel() || (sType === "Sum" ? sFieldLabel :
-				oBundle.getText("PIVOT_VALUE_LABEL", [sFieldLabel, oBundle.getText("PIVOT_AGG_" + sType.toUpperCase())]));
+			// Agregación efectiva: un campo calculado Aggregate siempre usa Formula y Formula solo vale para
+			// ellos. El motor recibe la configurada para avisar (Log.warning) cuando la normaliza.
+			var oCalculated = mCalculated && mCalculated[sField];
+			var sEffective = oCalculated && oCalculated.level === "aggregate" ? "Formula" :
+				(sType === "Formula" ? "Sum" : sType);
+			var sLabel = oValue.getLabel() || (sEffective === "Sum" || sEffective === "Formula" ? sFieldLabel :
+				oBundle.getText("PIVOT_VALUE_LABEL", [sFieldLabel, oBundle.getText("PIVOT_AGG_" + sEffective.toUpperCase())]));
 			return {
 				field: sField,
 				aggregation: ENGINE_AGGREGATION[sType],
-				aggregationType: sType,
+				aggregationType: sEffective,
 				label: sLabel,
 				format: oValue.getFormat(),
 				decimals: oValue.getDecimals(),
@@ -758,7 +777,7 @@ sap.ui.define([
 			};
 		});
 
-		return {
+		var oConfig = {
 			rows: this.getRows().map(dimension),
 			columns: this.getColumns().map(dimension),
 			values: aValues,
@@ -774,6 +793,23 @@ sap.ui.define([
 				empty: oBundle.getText("PIVOT_EMPTY")
 			}
 		};
+		if (mCalculated) {
+			oConfig.calculatedFields = mCalculated;
+		}
+		return oConfig;
+	};
+
+	/**
+	 * Registra los errores y avisos de los campos calculados devueltos por el motor.
+	 * @param {object} oResult Resultado del motor
+	 * @private
+	 */
+	PivotTable.prototype._logIssues = function (oResult) {
+		var sId = this.getId();
+		((oResult && oResult.issues) || []).forEach(function (oIssue) {
+			Log[oIssue.type === "error" ? "error" : "warning"](
+				"Campo calculado «" + oIssue.label + "» (" + oIssue.field + "): " + oIssue.message, sId, "com.frank.pivot");
+		});
 	};
 
 	PivotTable.prototype._createProvider = function () {
@@ -824,7 +860,9 @@ sap.ui.define([
 		// Camino rápido: datos en memoria y volumen pequeño -> cálculo síncrono, sin parpadeo
 		if (bClient && !useWorker(aRecords)) {
 			try {
-				this._applyResult(PivotEngine.compute(aRecords, oConfig), oConfig, []);
+				var oResult = PivotEngine.compute(aRecords, oConfig);
+				this._logIssues(oResult);
+				this._applyResult(oResult, oConfig, []);
 			} catch (oError) {
 				this._handleError(oError);
 			}
@@ -844,11 +882,16 @@ sap.ui.define([
 				preAggregated: oLoad.preAggregated,
 				filters: oLoad.preAggregated ? null : oConfig.filters // el backend ya filtró
 			});
+			if (oLoad.knownFields) {
+				// Mismos campos que usó el $apply, para que el motor marque los mismos operandos como inválidos
+				oEngineConfig.knownFields = oLoad.knownFields;
+			}
 			var pResult = useWorker(oLoad.records) ?
 				WorkerClient.compute(oLoad.records, oEngineConfig) :
 				Promise.resolve(PivotEngine.compute(oLoad.records, oEngineConfig));
 			return pResult.then(function (oResult) {
 				if (iRun === that._iRun) {
+					that._logIssues(oResult);
 					var aMessages = oLoad.truncated ?
 						[bundle().getText("PIVOT_TRUNCATED_RECORDS", [that.getMaxRecords()])] : [];
 					that._applyResult(oResult, oConfig, aMessages);

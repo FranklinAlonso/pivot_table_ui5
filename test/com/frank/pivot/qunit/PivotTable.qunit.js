@@ -6,8 +6,9 @@ sap.ui.define([
 	"com/frank/pivot/export/PivotExport",
 	"com/frank/pivot/variant/LocalStorageStore",
 	"sap/ui/model/json/JSONModel",
-	"sap/ui/test/utils/nextUIUpdate"
-], function (PivotTable, PivotValue, PivotField, PivotExport, LocalStorageStore, JSONModel, nextUIUpdate) {
+	"sap/ui/test/utils/nextUIUpdate",
+	"sap/base/Log"
+], function (PivotTable, PivotValue, PivotField, PivotExport, LocalStorageStore, JSONModel, nextUIUpdate, Log) {
 	"use strict";
 
 	var DATA = [
@@ -227,6 +228,131 @@ sap.ui.define([
 		oPivot.destroy();
 	});
 
+	QUnit.module("PivotTable - campos calculados", {
+		beforeEach: function () {
+			var aLogged = this.aLogged = [];
+			this.fnError = Log.error;
+			this.fnWarning = Log.warning;
+			Log.error = function (sMessage) {
+				aLogged.push({ type: "error", message: sMessage });
+			};
+			Log.warning = function (sMessage) {
+				aLogged.push({ type: "warning", message: sMessage });
+			};
+		},
+		afterEach: function () {
+			Log.error = this.fnError;
+			Log.warning = this.fnWarning;
+			this.oPivot && this.oPivot.destroy();
+		}
+	});
+
+	var SALES = [
+		{ Region: "Norte", Producto: "Laptop", Ventas: 10000, Costo: 8500, Unidades: 10 },
+		{ Region: "Norte", Producto: "Teclado", Ventas: 1000, Costo: 500, Unidades: 50 }
+	];
+
+	function calculatedFields(sMargen) {
+		return [
+			new PivotField({ name: "Utilidad", label: "Utilidad", measure: true, formula: "{Ventas} - {Costo}", calculationLevel: "Record" }),
+			new PivotField({ name: "Margen", label: "Margen %", measure: true, formula: sMargen || "{Utilidad} / {Ventas}" }),
+			new PivotField({ name: "PrecioMedio", label: "Precio medio", measure: true, formula: "{Ventas} / {Unidades}" })
+		];
+	}
+
+	function createCalculated(mSettings) {
+		return create(Object.assign({
+			records: SALES,
+			rows: ["Region", "Producto"],
+			columns: [],
+			fields: calculatedFields(),
+			values: [
+				new PivotValue({ field: "Utilidad" }),
+				new PivotValue({ field: "Margen", aggregationType: "Formula", format: "Percent", decimals: 1 }),
+				new PivotValue({ field: "PrecioMedio", aggregationType: "Formula" })
+			]
+		}, mSettings));
+	}
+
+	QUnit.test("PivotField: la fórmula en el constructor se toma literal, no como binding", function (assert) {
+		var oField = new PivotField({ name: "M", formula: "{e4c2-1} / {Ventas netas}", calculationLevel: "Record" });
+		assert.strictEqual(oField.getFormula(), "{e4c2-1} / {Ventas netas}");
+		assert.strictEqual(oField.getName(), "M", "el resto de settings se aplica");
+		assert.strictEqual(oField.getCalculationLevel(), "Record");
+		var oBound = new PivotField({ name: "B", formula: { path: "/f" } });
+		oBound.setModel(new JSONModel({ f: "{a} * 2" }));
+		assert.strictEqual(oBound.getFormula(), "{a} * 2", "la forma objeto sigue permitiendo binding");
+		var oEscaped = new PivotField({ name: "E", formula: "\\{Ventas\\} - \\{Costo\\}" });
+		assert.strictEqual(oEscaped.getFormula(), "{Ventas} - {Costo}", "llaves escapadas (XML)");
+		oEscaped.destroy();
+		oField.destroy();
+		oBound.destroy();
+	});
+
+	QUnit.test("Subtotales con fórmula sobre las sumas, etiquetas y exportación", async function (assert) {
+		var oPivot = this.oPivot = await render(createCalculated());
+		var oResult = oPivot.getResult();
+		var oNorte = oResult.rows.filter(function (r) { return r.__type === "subtotal"; })[0];
+		assert.strictEqual(oNorte.v0, 2000, "Utilidad");
+		assert.ok(Math.abs(oNorte.v1 - 2000 / 11000) < 1e-9, "Margen = 0,1818…");
+		assert.ok(Math.abs(oNorte.v2 - 11000 / 60) < 1e-9, "Precio medio = 183,33");
+		assert.deepEqual(oPivot._aValueSpecs.map(function (v) { return v.label; }), ["Utilidad", "Margen %", "Precio medio"],
+			"Formula no añade sufijo a la etiqueta");
+		assert.deepEqual(this.aLogged, [], "sin avisos");
+
+		var oLayout = PivotExport.createLayout(oResult, oPivot._aValueSpecs);
+		var oExported = oLayout.rows[oLayout.headerRows + 2].cells;
+		assert.ok(Math.abs(oExported[3].value - 2000 / 11000) < 1e-9, "la exportación usa el valor calculado");
+	});
+
+	QUnit.test("Agregación distinta de Formula en un Aggregate: se normaliza con Log.warning", async function (assert) {
+		var oPivot = this.oPivot = await render(createCalculated({ values: [new PivotValue({ field: "Margen", aggregationType: "Average" })] }));
+		var oTotal = oPivot.getResult().rows.filter(function (r) { return r.__type === "total"; })[0];
+		assert.ok(Math.abs(oTotal.v0 - 2000 / 11000) < 1e-9, "no es el promedio de los márgenes");
+		assert.strictEqual(oPivot._aValueSpecs[0].aggregationType, "Formula");
+		assert.strictEqual(oPivot._aValueSpecs[0].label, "Margen %");
+		assert.ok(this.aLogged.some(function (o) {
+			return o.type === "warning" && /Margen %/.test(o.message) && /Formula/.test(o.message);
+		}), "Log.warning con el nombre del campo");
+	});
+
+	QUnit.test("Fórmula inválida: Log.error y celdas vacías sin romper la tabla", async function (assert) {
+		var oPivot = this.oPivot = await render(createCalculated({ fields: calculatedFields("{Utilidad} / ") }));
+		var oTotal = oPivot.getResult().rows.filter(function (r) { return r.__type === "total"; })[0];
+		assert.strictEqual(oTotal.v0, 2000, "los demás valores se calculan");
+		assert.strictEqual(oTotal.v1, null, "Margen vacío");
+		assert.ok(oTotal.v2 > 0, "Precio medio");
+		assert.ok(this.aLogged.some(function (o) {
+			return o.type === "error" && /Margen %/.test(o.message);
+		}), "Log.error con el nombre del campo");
+		assert.notOk(oPivot.getAggregation("_strip").getType() === "Error" && oPivot.getAggregation("_strip").getVisible(),
+			"sin error general de la tabla");
+		assert.ok(oPivot.getInnerTable().getBinding("rows").getLength() > 0, "la tabla tiene filas");
+	});
+
+	QUnit.test("Worker y sin worker dan el mismo resultado", async function (assert) {
+		var oSync = this.oPivot = await render(createCalculated());
+		var oExpected = JSON.parse(JSON.stringify(oSync.getResult()));
+		var oAsync = createCalculated({ workerThreshold: 1 });
+		var pDone = new Promise(function (fnResolve) {
+			oAsync.attachEventOnce("updateFinished", fnResolve);
+		});
+		await render(oAsync);
+		await pDone;
+		assert.deepEqual(oAsync.getResult(), oExpected, "resultado idéntico");
+		oAsync.destroy();
+	});
+
+	QUnit.test("getConfiguration / setConfiguration conservan Formula", function (assert) {
+		var oPivot = this.oPivot = createCalculated();
+		var oConfig = JSON.parse(JSON.stringify(oPivot.getConfiguration()));
+		assert.strictEqual(oConfig.values[1].aggregationType, "Formula");
+		oPivot.setConfiguration({ values: [] });
+		oPivot.setConfiguration(oConfig);
+		assert.strictEqual(oPivot.getValues()[1].getAggregationType(), "Formula");
+		assert.strictEqual(oPivot.getValues()[1].getFormat(), "Percent");
+	});
+
 	QUnit.module("PivotExport");
 
 	QUnit.test("La hoja reproduce la disposición de la tabla", async function (assert) {
@@ -403,5 +529,25 @@ sap.ui.define([
 		assert.deepEqual(oPivot.getRows(), ["Region"]);
 		assert.deepEqual(oPivot.getFilters(), {});
 		assert.deepEqual(oPivot.getConfiguration().colorRules, [], "colores inseguros descartados");
+	});
+
+	QUnit.test("Vistas con campos calculados: Formula se restaura y un campo eliminado se ignora", async function (assert) {
+		var oView = await this.oStore.save("ventas", {
+			name: "Márgenes",
+			configuration: {
+				values: [
+					{ field: "Margen", aggregationType: "Formula", format: "Percent", decimals: 1 },
+					{ field: "Eliminado", aggregationType: "Formula" }
+				]
+			}
+		});
+		var oPivot = this.oPivot = await renderWithViews(this.oStore, {
+			fields: [new PivotField({ name: "Margen", label: "Margen %", formula: "{Importe} / 100" })]
+		});
+		assert.ok(oPivot.applyVariant(oView.key));
+		await nextUIUpdate();
+		assert.deepEqual(oPivot.getValues().map(function (v) { return [v.getField(), v.getAggregationType()]; }),
+			[["Margen", "Formula"]], "el valor del campo que ya no existe se ignora");
+		assert.ok(oPivot.getResult().rows.length > 0, "la tabla se calcula");
 	});
 });
