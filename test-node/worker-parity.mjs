@@ -100,6 +100,13 @@ const CASES = {
 			{ field: "Ciclo", aggregation: "sum" }
 		]
 	},
+	"valor anterior (previousField), también sobre un record": {
+		rows: ["Region"], columns: ["Anio"], calculatedFields: CALCULATED,
+		values: [
+			{ field: "Ventas", aggregation: "sum", previousField: "Costo" },
+			{ field: "Utilidad", aggregation: "avg", previousField: "Tramo" }
+		]
+	},
 	"calculados, jerárquico y record como dimensión": {
 		rows: ["Tramo", "Region"], columns: [], hierarchical: true, calculatedFields: CALCULATED,
 		filters: { Region: ["Norte", "Sur"] },

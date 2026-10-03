@@ -315,6 +315,26 @@ sap.ui.define(["./Formula"], function (Formula) {
 			}
 		});
 
+		// Valor anterior (previousField): se agrega igual que el valor, así que no cabe en un aggregate
+		aValues.forEach(function (oValue) {
+			if (!oValue.previousField) {
+				return;
+			}
+			var oPrevious = mInfo[oValue.previousField];
+			if (oValue.aggregation === "formula" || (oPrevious && oPrevious.level === AGGREGATE)) {
+				issue("warning", oValue.field, "El valor anterior (" + oValue.previousField + ") no se admite en campos " +
+					"calculados agregados; se ignora");
+				delete oValue.previousField;
+			} else if (oPrevious && (oPrevious.error || bPreAggregated)) {
+				if (bPreAggregated && !oPrevious.error) {
+					serverUnsupported(oPrevious.name);
+				}
+				oValue.previousInvalid = true;
+			} else if (oPrevious) {
+				needRecord(oPrevious.name);
+			}
+		});
+
 		// Campos record usados como dimensión o filtro (solo modo cliente)
 		if (!bPreAggregated) {
 			(oConfig.rows || []).concat(oConfig.columns || []).map(function (vDim) {

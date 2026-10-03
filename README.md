@@ -100,6 +100,7 @@ sap.ui.define(["com/frank/pivot/PivotTable", "com/frank/pivot/PivotValue"], func
 | `columns` | `string[]` | `[]` | Dimensiones de columna |
 | `filters` | `object` | `null` | `{campo: [valores permitidos]}`. En modo OData V4 se envían en `$apply` |
 | `colorRules` | `object[]` | `null` | Reglas de color de celdas `[{field, value?, color}]` (ver [Colores de celdas](#colores-de-celdas)) |
+| `textRules` | `object[]` | `null` | Reglas de estilo de texto (color, negrita, cursiva, tachado) de filas, columnas o celdas (ver [Estilos de texto](#estilos-de-texto)) |
 | `colorShadeStep` | `float` | `0.15` | Variación de tono del color de una regla en subtotales (×1) y totales generales (×2), entre 0 y 0,45. `0` = mismo color |
 | `mode` | `DataMode` | `Client` | `Client` (en memoria) u `ODataV4` (agregación en el backend) |
 | `modelName` | `string` | `""` | Modo OData V4: nombre del modelo (vacío = modelo por defecto) |
@@ -114,6 +115,7 @@ sap.ui.define(["com/frank/pivot/PivotTable", "com/frank/pivot/PivotValue"], func
 | `workerThreshold` | `int` | `50000` | A partir de este número de registros el cálculo se hace en un Web Worker (`0` = nunca) |
 | `title` | `string` | `""` | Título de la barra de herramientas |
 | `showToolbar` / `enablePersonalization` / `enableExport` | `boolean` | `true` | Barra, botón de configuración y botón de Excel |
+| `exportPrevious` | `boolean` | `false` | Excel: añadir tras cada valor con `previousField` una columna con el valor anterior (ver [Valor anterior](#valor-anterior)) |
 | `visibleRowCount` | `int` | `15` | Filas visibles |
 | `autoRowCount` | `boolean` | `false` | Ajustar las filas a la altura disponible (requiere fijar `height`) |
 | `width` / `height` | `CSSSize` | `100%` / `auto` | Tamaño |
@@ -135,7 +137,7 @@ sap.ui.define(["com/frank/pivot/PivotTable", "com/frank/pivot/PivotValue"], func
 
 | Evento | Parámetros |
 |---|---|
-| `cellPress` | `rowType` (`data`/`subtotal`/`group`/`total`), `columnType` (`data`/`subtotal`/`total`/`dimension`), `rowFilters`, `columnFilters`, `field`, `aggregationType`, `value` |
+| `cellPress` | `rowType` (`data`/`subtotal`/`group`/`total`), `columnType` (`data`/`subtotal`/`total`/`dimension`), `rowFilters`, `columnFilters`, `field`, `aggregationType`, `value`, `previousValue` (solo con `previousField`) |
 | `configurationChange` | `configuration`: la configuración aplicada desde el panel |
 | `dataReceived` | `recordCount`, `truncated` (modo OData V4) |
 | `updateFinished` | `rowCount`, `columnCount`, `truncated` |
@@ -157,11 +159,12 @@ onCellPress: function (oEvent) {
 | Método | Descripción |
 |---|---|
 | `refresh()` | Fuerza el recálculo (necesario si se modifica en sitio el array de `records`) |
-| `getConfiguration()` / `setConfiguration(o)` | Leen y aplican la configuración serializable (filas, columnas, valores, filtros, colores, totales, jerarquía, nivel de expansión, etiquetas repetidas y tono). Es lo que guarda una vista |
+| `getConfiguration()` / `setConfiguration(o)` | Leen y aplican la configuración serializable (filas, columnas, valores, filtros, colores, estilos de texto, totales, jerarquía, nivel de expansión, etiquetas repetidas y tono). Es lo que guarda una vista |
 | `openColorRules()` | Abre directamente el diálogo de colores. Devuelve `Promise<reglas \| null>` |
+| `openTextRules()` | Abre directamente el diálogo de estilos de texto. Devuelve `Promise<reglas \| null>` |
 | `getDistinctValues(campo)` | Valores distintos y ordenados de un campo (máximo 1000) |
 | `openPersonalization()` | Abre el panel. Devuelve `Promise<config \| null>` |
-| `exportToSpreadsheet()` | Exporta a `.xlsx` con la misma disposición que la tabla: cabeceras multinivel combinadas, dimensiones y cabeceras fijas, subtotales y totales en negrita y, en la vista jerárquica, una columna con sangría y filas agrupadas (esquema). Devuelve `Promise` |
+| `exportToSpreadsheet()` | Exporta a `.xlsx` con la misma disposición que la tabla: cabeceras multinivel combinadas, dimensiones y cabeceras fijas, subtotales y totales en negrita, estilos de texto y, en la vista jerárquica, una columna con sangría y filas agrupadas (esquema). Devuelve `Promise` |
 | `getResult()` | Último resultado del motor (ver abajo) |
 | `getInnerTable()` | `sap.ui.table.Table` o `TreeTable` interna, para ajustes avanzados |
 | `saveVariant(nombre, opciones?)` | Guarda la configuración actual como vista. Opciones: `key` (sobrescribir), `public`, `default`. Devuelve `Promise<vista>` |
@@ -198,6 +201,58 @@ oPivot.setColorRules([
 | Colores admitidos | `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()` y nombres CSS. Cualquier otro valor se descarta |
 
 Las reglas forman parte de `getConfiguration()`, así que se guardan con las [vistas](#vistas-guardadas). Cambiar solo los colores reconstruye las columnas sin recalcular los datos. La exportación a Excel no incluye los colores.
+
+## Estilos de texto
+
+`textRules` aplica color, negrita, cursiva o tachado al **texto** de filas, columnas o celdas (las `colorRules` pintan el fondo; ambas se pueden combinar). En el panel de configuración (⚙), junto al título **Valores**, el botón de formato abre el diálogo *Estilos de texto*; también `openTextRules()`.
+
+```js
+new PivotTable({
+	rows: ["Estado", "Ceco"], columns: ["Periodo"],
+	values: [new PivotValue({ field: "ImporteV5", previousField: "ImporteV4" })],
+	textRules: [
+		// Fila eliminada: todo el texto tachado en rojo (dimensiones y valores)
+		{ scope: "row", field: "Estado", value: "Eliminada", color: "Negative", strikethrough: true },
+		{ scope: "row", field: "Estado", value: "Modificada", color: "Critical" },
+		// Columnas de un año en cursiva
+		{ scope: "column", field: "Anio", value: 2027, italic: true },
+		// Celdas negativas de un valor en rojo y negrita
+		{ scope: "cell", valueField: "VarAbs", operator: "lt", to: 0, color: "Negative", bold: true },
+		// Valor distinto del anterior (previousField): en azul en lugar del naranja por defecto
+		{ scope: "cell", operator: "changed", color: "Information" }
+	]
+});
+```
+
+| Propiedad | Descripción |
+|---|---|
+| `scope` | `row` (valor de una dimensión de fila), `column` (valor de una dimensión de columna) o `cell` (valor numérico de la celda) |
+| `field`, `value` | `row` / `column`: campo y valor. Sin `value`, cualquier valor del campo |
+| `valueField` | `cell`: solo las celdas de ese campo de valor (opcional) |
+| `operator`, `to`, `to2` | `cell`: `eq`, `ne`, `lt`, `le`, `gt`, `ge` (con `to`), `between` (`to` y `to2`), `empty`, `changed` (distinto del valor anterior) |
+| `color` | Semántico del tema (`Negative`, `Critical`, `Positive`, `Information`, `Neutral`) o hex (`#b44f00`) |
+| `bold`, `italic`, `strikethrough` | `true` / `false` |
+
+- Las reglas de fila y de columna se aplican a las filas y columnas de detalle, **no a subtotales, grupos ni totales**. Las de celda dependen del valor y se aplican a cualquier celda.
+- Si varias reglas definen la misma propiedad, gana la última. El color de una regla de texto prevalece sobre el color de contraste de las reglas de fondo.
+- Una regla sobre un campo que no está en filas, columnas o valores no tiene efecto (`Log.warning`).
+- Los colores semánticos usan las variables del tema (Horizon, Quartz, modos oscuros y alto contraste). En Excel se exportan como su color equivalente.
+- Se guardan en las vistas (`getConfiguration().textRules`); una regla sobre un campo que ya no existe se descarta al cargar la vista.
+
+## Valor anterior
+
+`PivotValue#previousField` indica el campo con el valor anterior (p. ej. de la versión con la que se compara). Se agrega igual que `field`, en celdas, subtotales y totales:
+
+```js
+new PivotValue({ field: "ImporteV5", previousField: "ImporteV4", aggregationType: "Sum" })
+```
+
+- Si el valor cambió, la celda muestra encima el anterior (pequeño y tachado) y debajo el actual en naranja y negrita. Si no cambió, solo el valor. El estilo del actual se cambia con una regla `{ scope: "cell", operator: "changed", ... }`.
+- Con `previousField` las filas pasan a tener dos líneas de altura.
+- `getResult()`: cada fila lleva `<id>_prev` junto a `<id>` (p. ej. `v0` y `v0_prev`); `cellPress` incluye `previousValue`.
+- Excel: la celda exporta el valor actual (número, con su color). Con `exportPrevious: true` se añade tras cada valor una columna con el anterior, tachada.
+- Modo `ODataV4`: se pide en `$apply` con el alias `pv<i>_prev`.
+- No se admite en campos calculados `Aggregate` (se ignora con `Log.warning`). Sí en campos normales y `Record`.
 
 ## Vistas guardadas
 
@@ -384,6 +439,7 @@ Una vista es:
 | `format` | `ValueFormat` | `Number` | `Number`, `Integer`, `Currency`, `Percent` (el valor debe ser una fracción: 0,2 = 20 %) |
 | `decimals` | `int` | `-1` | Número de decimales. `-1` = automático |
 | `unit` | `string` | | Código de moneda cuando `format="Currency"` |
+| `previousField` | `string` | | Campo con el valor anterior: la celda muestra el anterior tachado y el actual resaltado si cambió (ver [Valor anterior](#valor-anterior)) |
 
 ## PivotField
 
@@ -453,14 +509,14 @@ El margen del total es `Sum(Utilidad) / Sum(Ventas)` = 2000 / 11000, no el prome
 {
   rowDimensions:    [{ name, label }],
   columnDimensions: [{ name, label }],
-  values:           [{ field, aggregation, label }],
+  values:           [{ field, aggregation, label, previousField? }],
   headerLevels: 2,                       // niveles de cabecera
   columns: [{                            // una por cada combinación de columna × valor
     id: "v0", type: "data" | "subtotal" | "total",
     valueIndex: 0, columnKeys: [2024, "T1"],
     labels: ["2024", "T1"], spans: [5, 1]
   }],
-  rows: [{ __type, __level, __rowKeys: ["EMEA", "España"], d0: "EMEA", d1: "España", v0: 1234.5 }],
+  rows: [{ __type, __level, __rowKeys: ["EMEA", "España"], d0: "EMEA", d1: "España", v0: 1234.5, v0_prev: 1200 }], // _prev: previousField
   tree: [{ label, __type, __level, __rowKeys, v0, nodes: [...] }] | null,
   recordCount, usedRecordCount, totalColumns, truncated,
   issues: [{ type: "error" | "warning", field, label, message }]  // solo si hay campos calculados

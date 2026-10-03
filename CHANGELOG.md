@@ -2,6 +2,20 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y [versionado semántico](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Añadido
+
+- Estilos de texto: propiedad `textRules` de `PivotTable` con reglas de fila (valor de una dimensión de fila), columna (valor de una dimensión de columna) o celda (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `between`, `empty`, `changed`) que aplican color (semántico del tema o hex), negrita, cursiva o tachado. Las reglas de fila y columna no se aplican a subtotales ni totales.
+- Diálogo *Estilos de texto* en el panel de configuración (junto a **Valores**) y método `openTextRules()`.
+- Valor anterior: propiedad `previousField` de `PivotValue`. El motor lo agrega igual que el valor (también en el Web Worker y en `$apply`, alias `pv<i>_prev`) y la celda muestra el anterior tachado encima del actual, resaltado si cambió. Parámetro `previousValue` en `cellPress`.
+- Exportación a Excel con los estilos de texto (color de fuente, negrita, cursiva, tachado) y, con `exportPrevious`, una columna con el valor anterior.
+- Las vistas guardadas incluyen `textRules` y `previousField`.
+
+### Cambiado
+
+- `getConfiguration()` incluye `textRules` y `previousField` en cada valor.
+
 ## [1.3.0] - 2026-10-02
 
 ### Añadido

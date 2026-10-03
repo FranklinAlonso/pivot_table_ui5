@@ -91,6 +91,15 @@ sap.ui.define([
 				default:
 					throw new Error("La agregación '" + sAgg + "' no está soportada en modo OData V4 (no es re-agregable)");
 			}
+			// Valor anterior (PivotValue#previousField): misma agregación con alias pv<i>_prev
+			if (oValue.previousField && !oValue.previousInvalid) {
+				var sPrevAlias = Aggregations.previousAlias(i);
+				if (sAgg === "avg") {
+					aAggregates.push(oValue.previousField + " with sum as " + sPrevAlias + "_sum");
+				} else if (sAgg !== "count") {
+					aAggregates.push(oValue.previousField + " with " + sAgg + " as " + sPrevAlias);
+				}
+			}
 		});
 		if (bCount) {
 			aAggregates.push("$count as " + Aggregations.COUNT_ALIAS);

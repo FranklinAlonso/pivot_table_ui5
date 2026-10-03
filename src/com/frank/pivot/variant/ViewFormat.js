@@ -11,8 +11,9 @@
  * Módulo sin dependencias de UI5 (probado también en Node.js).
  */
 sap.ui.define([
-	"../table/ColorRules"
-], function (ColorRules) {
+	"../table/ColorRules",
+	"../table/TextRules"
+], function (ColorRules, TextRules) {
 	"use strict";
 
 	/** Versión del formato de "configuration". Incrementar al cambiarlo y añadir el paso en migrate(). */
@@ -116,6 +117,10 @@ sap.ui.define([
 						oClean[sKey] = oValue[sKey];
 					}
 				});
+				// Valor anterior: se conserva vacío ("" = sin él); un campo que ya no existe se descarta
+				if (typeof oValue.previousField === "string" && (!oValue.previousField || isField(oValue.previousField))) {
+					oClean.previousField = oValue.previousField;
+				}
 				return oClean;
 			});
 		}
@@ -134,6 +139,12 @@ sap.ui.define([
 		if (oIn.colorRules === null || Array.isArray(oIn.colorRules)) {
 			oOut.colorRules = ColorRules.normalize(oIn.colorRules).filter(function (oRule) {
 				return isField(oRule.field);
+			});
+		}
+
+		if (oIn.textRules === null || Array.isArray(oIn.textRules)) {
+			oOut.textRules = TextRules.normalize(oIn.textRules).filter(function (oRule) {
+				return oRule.scope === "cell" ? !oRule.valueField || isField(oRule.valueField) : isField(oRule.field);
 			});
 		}
 

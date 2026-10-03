@@ -144,6 +144,7 @@ sap.ui.define(["./Aggregations", "./CalculatedFields"], function (Aggregations, 
 	 *   values: {field, aggregation: "sum"|"count"|"countdistinct"|"avg"|"min"|"max"|"formula", label}[]
 	 *   calculatedFields: {campo: {formula: "{a} / {b}", level: "aggregate"|"record", label}} (texto:
 	 *     se parsea aquí, también dentro del Web Worker)
+	 *   values[].previousField: campo con el valor anterior; las filas llevan además <id>_prev
 	 *   knownFields: string[] campos existentes (opcional; para validar las referencias de las fórmulas)
 	 *   filters: {campo: valoresPermitidos[]}
 	 *   showSubtotals, showGrandTotals, hierarchical, repeatRowLabels: boolean
@@ -164,6 +165,18 @@ sap.ui.define(["./Aggregations", "./CalculatedFields"], function (Aggregations, 
 		var aAccumulators = aValues.map(function (oValue, i) {
 			return Aggregations.create(oValue, i, oCfg.preAggregated);
 		});
+		// Valor anterior (previousField): acumulador adicional con la misma agregación, tras los de los valores
+		var aPreviousIndex = [];
+		aValues.forEach(function (oValue, i) {
+			if (oValue.previousField) {
+				aPreviousIndex[i] = aAccumulators.length;
+				aAccumulators.push(Aggregations.create(Object.assign({}, oValue, {
+					field: oValue.previousField,
+					invalid: oValue.invalid || oValue.previousInvalid
+				}), i, oCfg.preAggregated, Aggregations.previousAlias(i)));
+			}
+		});
+		var A = aAccumulators.length;
 
 		// Qué niveles de prefijo hay que acumular (0 = total, R/C = detalle)
 		var aNeedRow = [];
@@ -239,7 +252,7 @@ sap.ui.define(["./Aggregations", "./CalculatedFields"], function (Aggregations, 
 				});
 				mCells.set(sCellKey, aAcc);
 			}
-			for (var v = 0; v < V; v++) {
+			for (var v = 0; v < A; v++) {
 				aAccumulators[v].add(aAcc[v], oRec);
 			}
 		}
@@ -326,6 +339,10 @@ sap.ui.define(["./Aggregations", "./CalculatedFields"], function (Aggregations, 
 			aColumns.forEach(function (oCol) {
 				var aAcc = mCells.get(sRowKey + CELL_SEP + oCol.cellKey);
 				oTarget[oCol.id] = aAcc ? aAccumulators[oCol.valueIndex].result(aAcc[oCol.valueIndex]) : null;
+				var iPrevious = aPreviousIndex[oCol.valueIndex];
+				if (iPrevious !== undefined) {
+					oTarget[oCol.id + "_prev"] = aAcc ? aAccumulators[iPrevious].result(aAcc[iPrevious]) : null;
+				}
 			});
 			return oTarget;
 		}
@@ -401,7 +418,13 @@ sap.ui.define(["./Aggregations", "./CalculatedFields"], function (Aggregations, 
 		var oResult = {
 			rowDimensions: aRowDims.map(function (d) { return { name: d.name, label: d.label }; }),
 			columnDimensions: aColDims.map(function (d) { return { name: d.name, label: d.label }; }),
-			values: aValues.map(function (v) { return { field: v.field, aggregation: v.aggregation, label: v.label }; }),
+			values: aValues.map(function (v) {
+				var oOut = { field: v.field, aggregation: v.aggregation, label: v.label };
+				if (v.previousField) {
+					oOut.previousField = v.previousField;
+				}
+				return oOut;
+			}),
 			headerLevels: H,
 			columns: aColumns.map(function (oCol) {
 				delete oCol.groupIds;

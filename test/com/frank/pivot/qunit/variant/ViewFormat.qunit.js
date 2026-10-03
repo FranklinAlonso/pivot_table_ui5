@@ -90,6 +90,31 @@ sap.ui.define([
 		assert.deepEqual(oResult.droppedFields, ["Borrado"]);
 	});
 
+	QUnit.test("sanitize: reglas de texto y valor anterior", function (assert) {
+		var oResult = ViewFormat.sanitize(JSON.parse(JSON.stringify({
+			values: [
+				{ field: "V5", previousField: "V4" },
+				{ field: "V5", previousField: "Borrado" },
+				{ field: "V5", previousField: "" }
+			],
+			textRules: [
+				{ scope: "row", field: "Estado", value: "Eliminada", color: "Negative", strikethrough: true },
+				{ scope: "row", field: "Viejo", bold: true },
+				{ scope: "cell", valueField: "Viejo", operator: "lt", to: 0, bold: true },
+				{ scope: "cell", operator: "changed", color: "red;}" },
+				{ scope: "column", field: "Anio", value: 2027, italic: "sí" }
+			]
+		})), ["Estado", "Anio", "V5", "V4"]);
+		assert.deepEqual(oResult.configuration.values, [
+			{ field: "V5", previousField: "V4" }, { field: "V5" }, { field: "V5", previousField: "" }
+		], "el anterior que ya no existe se descarta");
+		assert.deepEqual(oResult.configuration.textRules, [
+			{ scope: "row", field: "Estado", value: "Eliminada", color: "Negative", strikethrough: true }
+		], "reglas sobre campos inexistentes, colores inseguros o sin estilo válido se descartan");
+		assert.deepEqual(oResult.droppedFields, ["Borrado", "Viejo"]);
+		assert.deepEqual(ViewFormat.sanitize({ textRules: null }).configuration, { textRules: [] });
+	});
+
 	QUnit.test("sanitize solo incluye las claves presentes", function (assert) {
 		assert.deepEqual(ViewFormat.sanitize({ rows: ["A"] }).configuration, { rows: ["A"] });
 		assert.deepEqual(ViewFormat.sanitize({ filters: null, colorRules: null }).configuration, { filters: null, colorRules: [] });

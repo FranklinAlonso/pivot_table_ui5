@@ -42,3 +42,31 @@
 .pvPivotTable .sapUiTableHeaderCell .sapMLabel {
 	width: 100%;
 }
+
+/* Valor anterior (PivotValue#previousField): pequeño y tachado encima del actual */
+.pvPivotTable .pvValueWithPrevious {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	line-height: 1.15;
+}
+
+.pvPivotTable .pvPreviousValue {
+	font-size: var(--sapFontSmallSize, 0.75rem);
+	color: var(--sapContent_LabelColor, #556b82);
+	text-decoration: line-through;
+}
+
+/* Valor actual distinto del anterior (se puede cambiar con una regla de texto "changed") */
+.pvPivotTable [data-pivot-changed="true"][data-pivot-changed] {
+	color: var(--sapCriticalTextColor, #b44f00) !important;
+	font-family: var(--sapFontBoldFamily, inherit);
+	font-weight: bold;
+}
+
+/* Vista previa del diálogo de estilos de texto (contenido HTML: hereda la fuente del tema) */
+.pvTextRulesDialog .pvTextRulePreview {
+	font-family: var(--sapFontFamily, "72", Arial, sans-serif);
+	font-size: var(--sapFontSize, 0.875rem);
+	white-space: nowrap;
+}

@@ -10,10 +10,14 @@
  *
  * No depende de UI5 (se prueba en Node.js). El resultado lo escribe export/XlsxWriter.js.
  */
-sap.ui.define([], function () {
+sap.ui.define(["../table/TextRules"], function (TextRules) {
 	"use strict";
 
 	var MAX_OUTLINE_LEVEL = 7; // límite de Excel
+	/** Estilo del valor actual cuando difiere del anterior (como en pantalla, ver PivotTable.css). */
+	var CHANGED_FONT = { color: TextRules.hexColor("Critical"), bold: true };
+	/** Estilo del valor anterior exportado (exportPrevious). */
+	var PREVIOUS_FONT = { color: "#556b82", strikethrough: true };
 
 	/**
 	 * Formato numérico de Excel equivalente a table/ValueFormatter.js.
@@ -52,8 +56,12 @@ sap.ui.define([], function () {
 	 * @param {object[]} aValueSpecs Especificaciones de valores (formato)
 	 * @param {object} [mOptions]
 	 * @param {boolean} [mOptions.hierarchical] Vista jerárquica (usa oResult.tree)
+	 * @param {object[]} [mOptions.textRules] Reglas de estilo de texto (PivotTable#textRules)
+	 * @param {boolean} [mOptions.exportPrevious] Añadir tras cada columna con previousField otra con el valor anterior
+	 * @param {string} [mOptions.previousLabel="{0} (prev.)"] Cabecera de esas columnas ({0} = cabecera del valor)
 	 * @returns {object} Disposición:
-	 *   rows: {cells: object[], outlineLevel: int}[] — celda: {value, kind: "header"|"label"|"number", total, indent, format}
+	 *   rows: {cells: object[], outlineLevel: int}[] — celda: {value, kind: "header"|"label"|"number", total, indent, format,
+	 *     font: {color, bold, italic, strikethrough}}
 	 *   merges: {row, col, rowSpan, colSpan}[] (base 0)
 	 *   widths: int[] (caracteres), freezeRows, freezeColumns, outline: boolean
 	 */
@@ -61,9 +69,10 @@ sap.ui.define([], function () {
 		var bTree = !!(mOptions && mOptions.hierarchical && oResult.tree);
 		var aRowDims = oResult.rowDimensions || [];
 		var aColDims = oResult.columnDimensions || [];
-		var aLeaves = oResult.columns || [];
 		var H = Math.max(oResult.headerLevels || 0, 1);
 		var aSpecs = aValueSpecs || [];
+		var oTextRules = mOptions && mOptions.textRules ? TextRules.createResolver(oResult, mOptions.textRules, aSpecs) : null;
+		var aLeaves = withPreviousColumns(oResult.columns || [], aSpecs, H, mOptions);
 
 		// ---- columnas de dimensión (igual que ColumnBuilder.dimensionColumn)
 		var aDimColumns = bTree ?
@@ -181,14 +190,32 @@ sap.ui.define([], function () {
 					indent: bTree ? oRow.__level || 0 : 0
 				};
 			});
+			if (oTextRules) {
+				var oDimFont = TextRules.combine(oTextRules.rules, oTextRules.dimension(oRow.__rowKeys, oRow.__type));
+				aCells.forEach(function (oCell) {
+					setFont(oCell, oDimFont);
+				});
+			}
 			aLeaves.forEach(function (oLeaf, iLeaf) {
 				var v = oRow[oLeaf.id];
-				aCells.push({
+				var oCell = {
 					value: isNumber(v) ? v : null,
 					kind: "number",
 					total: bTotal || oLeaf.type !== "data",
 					format: aFormats[iLeaf]
-				});
+				};
+				if (oLeaf.previousOf) {
+					setFont(oCell, PREVIOUS_FONT);
+				} else {
+					var bPrevious = !!(aSpecs[oLeaf.valueIndex] || {}).previousField;
+					var vPrev = bPrevious ? oRow[oLeaf.id + "_prev"] : undefined;
+					setFont(oCell, bPrevious && TextRules.isChanged(v, vPrev) ? CHANGED_FONT : null);
+					if (oTextRules) {
+						setFont(oCell, TextRules.combine(oTextRules.rules,
+							oTextRules.value(oLeaf, oRow.__rowKeys, oRow.__type, v, vPrev)));
+					}
+				}
+				aCells.push(oCell);
 			});
 			aRows.push({
 				cells: aCells,
@@ -221,6 +248,64 @@ sap.ui.define([], function () {
 			freezeColumns: aLeaves.length ? D : 0,
 			outline: bTree
 		};
+	}
+
+	/** Combina un estilo de texto en la celda (las propiedades posteriores prevalecen). */
+	function setFont(oCell, oFont) {
+		if (oFont) {
+			oCell.font = Object.assign(oCell.font || {}, oFont);
+		}
+	}
+
+	/**
+	 * Con exportPrevious, inserta tras cada hoja con previousField una hoja "<id>_prev" con el valor anterior.
+	 * Los grupos de cabecera que la contienen se ensanchan (spans) para incluirla.
+	 * @param {object[]} aLeaves Columnas de valor del resultado
+	 * @param {object[]} aSpecs Valores configurados
+	 * @param {int} H Niveles de cabecera
+	 * @param {object} [mOptions] Opciones de create
+	 * @returns {object[]} Columnas a exportar
+	 */
+	function withPreviousColumns(aLeaves, aSpecs, H, mOptions) {
+		var aHasPrevious = aLeaves.map(function (oLeaf) {
+			return !!(mOptions && mOptions.exportPrevious && (aSpecs[oLeaf.valueIndex] || {}).previousField);
+		});
+		if (aHasPrevious.indexOf(true) < 0) {
+			return aLeaves;
+		}
+		var sPattern = (mOptions && mOptions.previousLabel) || "{0} (prev.)";
+		var aOut = [];
+		aLeaves.forEach(function (oLeaf, i) {
+			var oCopy = Object.assign({}, oLeaf, { spans: (oLeaf.spans || []).map(function (iSpan, iLevel) {
+				// En los niveles superiores el grupo que empieza aquí abarca también las columnas de anterior
+				// de sus hojas; en el último nivel cada una lleva su etiqueta. (Las hojas que no inician grupo
+				// quedan cubiertas por la combinación de la primera, así que su span no se usa.)
+				if (iLevel >= H - 1) {
+					return iSpan;
+				}
+				var iExtra = 0;
+				for (var k = i; k < i + (iSpan || 1) && k < aLeaves.length; k++) {
+					iExtra += aHasPrevious[k] ? 1 : 0;
+				}
+				return (iSpan || 1) + iExtra;
+			}) });
+			aOut.push(oCopy);
+			if (aHasPrevious[i]) {
+				var aLabels = (oLeaf.labels && oLeaf.labels.length ? oLeaf.labels : [(aSpecs[oLeaf.valueIndex] || {}).label || ""]).slice();
+				// Última etiqueta no vacía (en subtotales los niveles inferiores van vacíos)
+				var sBase = aLabels.filter(Boolean).pop() || "";
+				aLabels[aLabels.length - 1] = sPattern.replace("{0}", sBase);
+				aOut.push(Object.assign({}, oLeaf, {
+					id: oLeaf.id + "_prev",
+					previousOf: oLeaf.id,
+					labels: aLabels,
+					spans: (oLeaf.spans || []).map(function () {
+						return 1;
+					})
+				}));
+			}
+		});
+		return aOut;
 	}
 
 	return {

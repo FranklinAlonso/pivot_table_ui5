@@ -28,6 +28,11 @@ sap.ui.define(["./Formula"], function (Formula) {
 		return "pv" + iIndex;
 	}
 
+	/** Alias en $apply del valor anterior (PivotValue#previousField) del valor i (modo servidor). */
+	function previousAlias(iIndex) {
+		return aliasFor(iIndex) + "_prev";
+	}
+
 	/** Alias en $apply de la suma del operando k de un valor de fórmula (modo servidor). */
 	function operandAlias(iIndex, k) {
 		return aliasFor(iIndex) + "_f" + k;
@@ -47,10 +52,11 @@ sap.ui.define(["./Formula"], function (Formula) {
 	 *   lleva además tree y operands (ver CalculatedFields.prepare); con invalid = true las celdas son null.
 	 * @param {int} iIndex Posición del valor (para los alias en modo servidor)
 	 * @param {boolean} bPreAggregated Si los registros ya vienen agregados del backend
+	 * @param {string} [sAlias] Alias en modo servidor (por defecto aliasFor(iIndex))
 	 * @returns {{init: function():object, add: function(object, object), result: function(object):number|null}}
 	 *   Acumulador. <code>add</code> muta el objeto acumulado.
 	 */
-	function create(oValue, iIndex, bPreAggregated) {
+	function create(oValue, iIndex, bPreAggregated, sAlias) {
 		var sAgg = String(oValue.aggregation || "sum").toLowerCase();
 		var sField = oValue.field;
 		if (SUPPORTED.indexOf(sAgg) < 0) {
@@ -62,7 +68,7 @@ sap.ui.define(["./Formula"], function (Formula) {
 		if (sAgg === "formula") {
 			return createFormula(oValue.tree, oValue.operands || [], iIndex, bPreAggregated);
 		}
-		return bPreAggregated ? createPreAggregated(sAgg, aliasFor(iIndex)) : createRaw(sAgg, sField);
+		return bPreAggregated ? createPreAggregated(sAgg, sAlias || aliasFor(iIndex)) : createRaw(sAgg, sField);
 	}
 
 	function createRaw(sAgg, sField) {
@@ -199,6 +205,7 @@ sap.ui.define(["./Formula"], function (Formula) {
 		SUPPORTED: SUPPORTED,
 		aliasFor: aliasFor,
 		operandAlias: operandAlias,
+		previousAlias: previousAlias,
 		toNumber: toNumber,
 		create: create
 	};

@@ -57,6 +57,31 @@ sap.ui.define([], function () {
 		var mNumFmtIds = {};
 		var aXfs = [];
 		var mXfIds = {};
+		// 0 = normal, 1 = negrita (como antes); el resto se añade según los estilos de texto usados
+		var aFonts = [{}, { bold: true }];
+		var mFontIds = { "": 0, "b": 1 };
+
+		/**
+		 * @param {object} oFont {bold, italic, strikethrough, color: "#rrggbb"}
+		 * @returns {int} Índice en fonts
+		 */
+		function fontId(oFont) {
+			var sColor = /^#[0-9a-f]{6}$/i.test(oFont.color || "") ? oFont.color.slice(1).toUpperCase() : "";
+			var sKey = (oFont.bold ? "b" : "") + (oFont.italic ? "i" : "") + (oFont.strikethrough ? "s" : "") +
+				(sColor ? "#" + sColor : "");
+			if (!(sKey in mFontIds)) {
+				mFontIds[sKey] = aFonts.length;
+				aFonts.push({ bold: !!oFont.bold, italic: !!oFont.italic, strikethrough: !!oFont.strikethrough, color: sColor });
+			}
+			return mFontIds[sKey];
+		}
+
+		function fontXml(oFont) {
+			return "<font>" + (oFont.bold ? "<b/>" : "") + (oFont.italic ? "<i/>" : "") +
+				(oFont.strikethrough ? "<strike/>" : "") + "<sz val=\"11\"/>" +
+				(oFont.color ? "<color rgb=\"FF" + oFont.color + "\"/>" : "") +
+				"<name val=\"Calibri\"/><family val=\"2\"/></font>";
+		}
 
 		function numFmtId(sCode) {
 			if (!sCode) {
@@ -73,13 +98,13 @@ sap.ui.define([], function () {
 		}
 
 		/**
-		 * @param {object} oStyle {format, bold, border, align: "center"|"left", indent, wrap}
+		 * @param {object} oStyle {format, bold, italic, strikethrough, color, border, align: "center"|"left", indent, wrap}
 		 * @returns {int} Índice en cellXfs
 		 */
 		function xf(oStyle) {
 			var oXf = {
 				numFmtId: numFmtId(oStyle.format),
-				fontId: oStyle.bold ? 1 : 0,
+				fontId: fontId(oStyle),
 				borderId: oStyle.border ? 1 : 0,
 				align: oStyle.align || "",
 				indent: Math.min(oStyle.indent || 0, 15),
@@ -105,8 +130,7 @@ sap.ui.define([], function () {
 				aOut.push("</numFmts>");
 			}
 			aOut.push(
-				"<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/><family val=\"2\"/></font>",
-				"<font><b/><sz val=\"11\"/><name val=\"Calibri\"/><family val=\"2\"/></font></fonts>",
+				"<fonts count=\"" + aFonts.length + "\">" + aFonts.map(fontXml).join("") + "</fonts>",
 				"<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>",
 				"<borders count=\"2\"><border><left/><right/><top/><bottom/><diagonal/></border>",
 				"<border><left style=\"thin\"><color auto=\"1\"/></left><right style=\"thin\"><color auto=\"1\"/></right>",
@@ -146,10 +170,11 @@ sap.ui.define([], function () {
 				vertical: "center"
 			};
 		}
+		// oCell.font: estilo de texto de las reglas (PivotLayout); prevalece sobre la negrita de totales
 		if (oCell.kind === "number") {
-			return { format: oCell.format, bold: oCell.total };
+			return Object.assign({ format: oCell.format, bold: oCell.total }, oCell.font);
 		}
-		return { bold: oCell.total, indent: oCell.indent };
+		return Object.assign({ bold: oCell.total, indent: oCell.indent }, oCell.font);
 	}
 
 	// ------------------------------------------------------------------ hoja

@@ -53,6 +53,9 @@ sap.ui.define([
 		 * @param {string} [sTitle] Título (nombre del fichero y de la hoja)
 		 * @param {object} [mOptions]
 		 * @param {boolean} [mOptions.hierarchical] Exportar la vista jerárquica (una columna con sangría y esquema)
+		 * @param {object[]} [mOptions.textRules] Reglas de estilo de texto
+		 * @param {boolean} [mOptions.exportPrevious] Columnas con el valor anterior (previousField)
+		 * @param {string} [mOptions.previousLabel] Cabecera de esas columnas ({0} = cabecera del valor)
 		 * @returns {Promise} Se resuelve al generar el fichero
 		 */
 		exportResult: function (oResult, aValueSpecs, sTitle, mOptions) {

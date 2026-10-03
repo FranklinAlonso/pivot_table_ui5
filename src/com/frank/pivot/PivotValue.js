@@ -29,7 +29,13 @@ sap.ui.define([
 				/** Decimales. -1 = automático. */
 				decimals: { type: "int", defaultValue: -1 },
 				/** Código de moneda (formato Currency), p. ej. "EUR". */
-				unit: { type: "string", defaultValue: "" }
+				unit: { type: "string", defaultValue: "" },
+				/**
+				 * Campo con el valor anterior (p. ej. de otra versión), agregado igual que <code>field</code>.
+				 * Si difiere del actual, la celda muestra el anterior tachado encima y el actual resaltado.
+				 * No se admite en campos calculados Aggregate.
+				 */
+				previousField: { type: "string", defaultValue: "" }
 			}
 		}
 	});

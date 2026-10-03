@@ -19,8 +19,10 @@ const TESTS = [
 	"com/frank/pivot/test/engine/Formula.qunit",
 	"com/frank/pivot/test/engine/PivotEngine.qunit",
 	"com/frank/pivot/test/engine/CalculatedFields.qunit",
+	"com/frank/pivot/test/engine/PreviousValue.qunit",
 	"com/frank/pivot/test/provider/ApplyBuilder.qunit",
 	"com/frank/pivot/test/table/ColorRules.qunit",
+	"com/frank/pivot/test/table/TextRules.qunit",
 	"com/frank/pivot/test/export/PivotLayout.qunit",
 	"com/frank/pivot/test/variant/ViewFormat.qunit",
 	"com/frank/pivot/test/variant/PersonalStore.qunit"

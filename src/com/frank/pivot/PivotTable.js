@@ -22,6 +22,7 @@ sap.ui.define([
 	"./engine/WorkerClient",
 	"./table/ColumnBuilder",
 	"./table/ColorRules",
+	"./table/TextRules",
 	"./provider/ClientDataProvider",
 	"./provider/ODataV4Provider",
 	"./variant/VariantController",
@@ -31,7 +32,7 @@ sap.ui.define([
 ], function (
 	Control, Component, Lib, JSONModel, Table, TreeTable, FixedRowMode, AutoRowMode,
 	OverflowToolbar, Title, ToolbarSpacer, Button, MessageStrip, Log,
-	library, PivotValue, PivotEngine, WorkerClient, ColumnBuilder, ColorRules, ClientDataProvider, ODataV4Provider,
+	library, PivotValue, PivotEngine, WorkerClient, ColumnBuilder, ColorRules, TextRules, ClientDataProvider, ODataV4Provider,
 	VariantController, LocalStorageStore, UshellPersonalizationStore, ODataV4Store
 ) {
 	"use strict";
@@ -95,6 +96,12 @@ sap.ui.define([
 				 * (2 pasos), entre 0 y 0.45. 0 = mismo color en todas las celdas.
 				 */
 				colorShadeStep: { type: "float", defaultValue: 0.15 },
+				/**
+				 * Reglas de estilo de texto (color, negrita, cursiva, tachado) de filas, columnas o celdas:
+				 * <code>[{scope: "row"|"column"|"cell", field?, value?, valueField?, operator?, to?, to2?,
+				 * color?, bold?, italic?, strikethrough?}]</code>. Ver README, "Estilos de texto".
+				 */
+				textRules: { type: "object", defaultValue: null },
 				/** Origen de los datos. */
 				mode: { type: "com.frank.pivot.DataMode", defaultValue: DataMode.Client },
 				/** Modo ODataV4: nombre del modelo (vacío = modelo por defecto). */
@@ -119,6 +126,8 @@ sap.ui.define([
 				showToolbar: { type: "boolean", defaultValue: true },
 				enablePersonalization: { type: "boolean", defaultValue: true },
 				enableExport: { type: "boolean", defaultValue: true },
+				/** Exportación: añadir tras cada valor con previousField una columna con el valor anterior (tachado). */
+				exportPrevious: { type: "boolean", defaultValue: false },
 				/** Filas visibles (si <code>autoRowCount</code> es false). */
 				visibleRowCount: { type: "int", defaultValue: 15 },
 				/** Ajustar las filas visibles a la altura disponible. Requiere <code>height</code>. */
@@ -164,7 +173,9 @@ sap.ui.define([
 						columnFilters: { type: "object" },
 						field: { type: "string" },
 						aggregationType: { type: "string" },
-						value: { type: "any" }
+						value: { type: "any" },
+						/** Valor anterior de la celda (solo si el valor tiene previousField) */
+						previousValue: { type: "any" }
 					}
 				},
 				/** La configuración cambió desde el panel. */
@@ -256,6 +267,7 @@ sap.ui.define([
 			this._oVariants.destroy();
 		}
 		this._applyColorStyles([]);
+		this._applyStyleSheet("-text", "");
 		this._oModel.destroy();
 		this._iRun++; // descarta resultados asíncronos pendientes
 	};
@@ -318,11 +330,13 @@ sap.ui.define([
 					label: oValue.getLabel(),
 					format: oValue.getFormat(),
 					decimals: oValue.getDecimals(),
-					unit: oValue.getUnit()
+					unit: oValue.getUnit(),
+					previousField: oValue.getPreviousField()
 				};
 			}),
 			filters: this.getFilters() ? JSON.parse(JSON.stringify(this.getFilters())) : null,
 			colorRules: ColorRules.normalize(this.getColorRules()),
+			textRules: JSON.parse(JSON.stringify(TextRules.normalize(this.getTextRules()))),
 			showSubtotals: this.getShowSubtotals(),
 			showGrandTotals: this.getShowGrandTotals(),
 			hierarchical: this.getHierarchical(),
@@ -343,7 +357,7 @@ sap.ui.define([
 		if (!oConfig) {
 			return this;
 		}
-		["rows", "columns", "filters", "colorRules", "showSubtotals", "showGrandTotals", "hierarchical",
+		["rows", "columns", "filters", "colorRules", "textRules", "showSubtotals", "showGrandTotals", "hierarchical",
 			"expandLevel", "repeatRowLabels", "colorShadeStep"].forEach(function (sKey) {
 			if (oConfig[sKey] !== undefined) {
 				that.setProperty(sKey, oConfig[sKey]);
@@ -353,7 +367,7 @@ sap.ui.define([
 			this.destroyValues();
 			oConfig.values.forEach(function (oValue) {
 				var mSettings = {};
-				["field", "aggregationType", "label", "format", "decimals", "unit"].forEach(function (sKey) {
+				["field", "aggregationType", "label", "format", "decimals", "unit", "previousField"].forEach(function (sKey) {
 					if (oValue[sKey] !== undefined && oValue[sKey] !== null) {
 						mSettings[sKey] = oValue[sKey];
 					}
@@ -414,6 +428,44 @@ sap.ui.define([
 	};
 
 	/**
+	 * Abre el diálogo de estilos de texto (color, negrita, cursiva, tachado de filas, columnas o
+	 * celdas). También accesible desde el panel de configuración.
+	 * @returns {Promise<object[]|null>} Reglas aplicadas o null si se cancela
+	 * @public
+	 */
+	PivotTable.prototype.openTextRules = function () {
+		var that = this;
+		return new Promise(function (fnResolve, fnReject) {
+			sap.ui.require(["com/frank/pivot/panel/TextRulesDialog"], function (TextRulesDialog) {
+				var mFields = that._getFieldMap();
+				function fields(aNames) {
+					return aNames.filter(function (sName, i) {
+						return aNames.indexOf(sName) === i;
+					}).map(function (sName) {
+						return { name: sName, label: (mFields[sName] && mFields[sName].getLabel()) || sName };
+					});
+				}
+				TextRulesDialog.open({
+					owner: that,
+					rowFields: fields(that.getRows()),
+					columnFields: fields(that.getColumns()),
+					valueFields: fields(that.getValues().map(function (oValue) {
+						return oValue.getField();
+					})),
+					rules: that.getConfiguration().textRules,
+					getValues: that.getDistinctValues.bind(that)
+				}).then(function (aRules) {
+					if (aRules) {
+						that.setTextRules(aRules);
+						that.fireConfigurationChange({ configuration: that.getConfiguration() });
+					}
+					fnResolve(aRules);
+				}, fnReject);
+			}, fnReject);
+		});
+	};
+
+	/**
 	 * Valores distintos de un campo, ordenados (para elegir reglas de color o filtros).
 	 * En modo Client se leen de los registros; en modo ODataV4, del último resultado.
 	 * @param {string} sField Campo
@@ -460,7 +512,10 @@ sap.ui.define([
 		return new Promise(function (fnResolve, fnReject) {
 			sap.ui.require(["com/frank/pivot/export/PivotExport"], function (PivotExport) {
 				PivotExport.exportResult(that.getResult(), that._aValueSpecs || [], that.getTitle(), {
-					hierarchical: that.getInnerTable().isA("sap.ui.table.TreeTable")
+					hierarchical: that.getInnerTable().isA("sap.ui.table.TreeTable"),
+					textRules: that.getTextRules(),
+					exportPrevious: that.getExportPrevious(),
+					previousLabel: bundle().getText("PIVOT_PREVIOUS_LABEL", ["{0}"])
 				}).then(fnResolve, fnReject);
 			}, fnReject);
 		});
@@ -685,13 +740,18 @@ sap.ui.define([
 
 	PivotTable.prototype._syncTableSettings = function () {
 		var oTable = this.getInnerTable();
-		var sRowModeKey = this.getAutoRowCount() ? "auto" : "fixed:" + this.getVisibleRowCount();
+		// Con valor anterior (previousField) las celdas tienen dos líneas
+		var iContentHeight = this.getValues().some(function (oValue) {
+			return !!oValue.getPreviousField();
+		}) ? 40 : 0;
+		var sRowModeKey = (this.getAutoRowCount() ? "auto" : "fixed:" + this.getVisibleRowCount()) + "|" + iContentHeight;
 		if (sRowModeKey !== this._sRowModeKey) {
 			this._sRowModeKey = sRowModeKey;
 			oTable.destroyRowMode();
 			oTable.setRowMode(this.getAutoRowCount() ?
-				new AutoRowMode({ minRowCount: 3 }) :
-				new FixedRowMode({ rowCount: this.getVisibleRowCount() }));
+				new AutoRowMode(Object.assign({ minRowCount: 3 }, iContentHeight ? { rowContentHeight: iContentHeight } : {})) :
+				new FixedRowMode(Object.assign({ rowCount: this.getVisibleRowCount() },
+					iContentHeight ? { rowContentHeight: iContentHeight } : {})));
 		}
 		oTable.setNoData(this.getNoDataText() || bundle().getText("PIVOT_NO_DATA"));
 	};
@@ -766,7 +826,7 @@ sap.ui.define([
 				(sType === "Formula" ? "Sum" : sType);
 			var sLabel = oValue.getLabel() || (sEffective === "Sum" || sEffective === "Formula" ? sFieldLabel :
 				oBundle.getText("PIVOT_VALUE_LABEL", [sFieldLabel, oBundle.getText("PIVOT_AGG_" + sEffective.toUpperCase())]));
-			return {
+			var oSpec = {
 				field: sField,
 				aggregation: ENGINE_AGGREGATION[sType],
 				aggregationType: sEffective,
@@ -775,6 +835,11 @@ sap.ui.define([
 				decimals: oValue.getDecimals(),
 				unit: oValue.getUnit()
 			};
+			if (oValue.getPreviousField()) {
+				// Solo si se usa, para no alterar la configuración (ni la firma) de las tablas sin él
+				oSpec.previousField = oValue.getPreviousField();
+			}
+			return oSpec;
 		});
 
 		var oConfig = {
@@ -910,7 +975,8 @@ sap.ui.define([
 	};
 
 	PivotTable.prototype._getColorSignature = function () {
-		return JSON.stringify(ColorRules.normalize(this.getColorRules())) + "|" + this._getShadeStep();
+		return JSON.stringify(ColorRules.normalize(this.getColorRules())) + "|" + this._getShadeStep() + "|" +
+			JSON.stringify(TextRules.normalize(this.getTextRules()));
 	};
 
 	PivotTable.prototype._getShadeStep = function () {
@@ -923,9 +989,18 @@ sap.ui.define([
 	 * @private
 	 */
 	PivotTable.prototype._applyColorStyles = function (aRules) {
-		var sStyleId = this.getId() + "-colors";
+		this._applyStyleSheet("-colors", ColorRules.buildCss(this.getId(), aRules, this._getShadeStep()));
+	};
+
+	/**
+	 * Crea, actualiza o elimina (CSS vacío) una hoja de estilo propia del control.
+	 * @param {string} sSuffix Sufijo del id del elemento style
+	 * @param {string} sCss Hoja de estilo
+	 * @private
+	 */
+	PivotTable.prototype._applyStyleSheet = function (sSuffix, sCss) {
+		var sStyleId = this.getId() + sSuffix;
 		var oStyle = document.getElementById(sStyleId);
-		var sCss = ColorRules.buildCss(this.getId(), aRules, this._getShadeStep());
 		if (!sCss) {
 			if (oStyle) {
 				oStyle.remove();
@@ -965,6 +1040,14 @@ sap.ui.define([
 		this._sColorSignature = this._getColorSignature();
 		var oColors = ColorRules.createResolver(oResult, this.getColorRules());
 		this._applyColorStyles(oColors ? oColors.rules : []);
+		var oTextRules = TextRules.createResolver(oResult, this.getTextRules(), oConfig.values);
+		this._applyStyleSheet("-text", oTextRules ? TextRules.buildCss(this.getId(), oTextRules.rules) : "");
+		if (oTextRules && oTextRules.unused.length) {
+			Log.warning("Reglas de texto sin efecto (el campo no está en filas, columnas o valores): " +
+				oTextRules.unused.map(function (i) {
+					return JSON.stringify(oTextRules.rules[i]);
+				}).join(", "), this.getId(), "com.frank.pivot");
+		}
 
 		oTable.unbindRows();
 		oTable.destroyColumns();
@@ -975,7 +1058,8 @@ sap.ui.define([
 			values: oConfig.values,
 			dimensionWidth: this.getDimensionColumnWidth(),
 			valueWidth: this.getValueColumnWidth(),
-			colors: oColors
+			colors: oColors,
+			textRules: oTextRules
 		});
 		oBuilt.columns.forEach(function (oColumn) {
 			oTable.addColumn(oColumn);
@@ -1036,7 +1120,8 @@ sap.ui.define([
 			columnFilters: mColumnFilters,
 			field: oValue ? oValue.field : null,
 			aggregationType: oValue ? oValue.aggregationType : null,
-			value: oLeaf ? oRow[oLeaf.id] : null
+			value: oLeaf ? oRow[oLeaf.id] : null,
+			previousValue: oLeaf && oValue && oValue.previousField ? oRow[oLeaf.id + "_prev"] : undefined
 		});
 	};
 

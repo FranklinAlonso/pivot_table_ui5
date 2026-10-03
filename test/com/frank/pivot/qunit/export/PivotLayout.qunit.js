@@ -116,6 +116,59 @@ sap.ui.define([
 		assert.ok(mParts["xl/workbook.xml"].indexOf("name=\"Ventas  2024 2025\"") >= 0, "nombre de hoja válido");
 	});
 
+	QUnit.test("Estilos de texto y valor anterior cambiado", function (assert) {
+		var aData = [
+			{ Estado: "Eliminada", Ceco: "CC09", Anio: 2026, V5: null, V4: 17147 },
+			{ Estado: "Modificada", Ceco: "CC01", Anio: 2026, V5: 34651, V4: 34651 },
+			{ Estado: "Modificada", Ceco: "CC02", Anio: 2026, V5: 19767, V4: 19000 }
+		];
+		var aValues = [{ field: "V5", aggregation: "sum", label: "Real", previousField: "V4" }];
+		var oResult = PivotEngine.compute(aData, { rows: ["Estado", "Ceco"], columns: ["Anio"], values: aValues });
+		var oLayout = PivotLayout.create(oResult, aValues, {
+			textRules: [{ scope: "row", field: "Estado", value: "Eliminada", color: "Negative", strikethrough: true }]
+		});
+		var H = oLayout.headerRows;
+		var aEliminada = oLayout.rows[H].cells;
+		assert.deepEqual(aEliminada[0].font, { color: "#aa0808", strikethrough: true }, "dimensión tachada en rojo");
+		assert.deepEqual(aEliminada[2].font, { color: "#aa0808", bold: true, strikethrough: true },
+			"valor: estilo de cambio y luego la regla (la regla prevalece)");
+		var aSubtotal = oLayout.rows[H + 1].cells;
+		assert.notOk(aSubtotal[0].font, "las reglas de fila no aplican al subtotal");
+		var aSinCambio = oLayout.rows[H + 2].cells;
+		assert.notOk(aSinCambio[2].font, "sin cambio: sin estilo");
+		assert.deepEqual(oLayout.rows[H + 3].cells[2].font, { color: "#b44f00", bold: true }, "cambiado");
+
+		var sXml = XlsxWriter.createParts(oLayout, "x")["xl/styles.xml"];
+		assert.ok(sXml.indexOf("<font><b/><strike/><sz val=\"11\"/><color rgb=\"FFAA0808\"/>") > 0, "fuente en styles.xml");
+		var oPlain = XlsxWriter.createParts(PivotLayout.create(PivotEngine.compute(DATA, { rows: ["Region"], values: VALUES }),
+			VALUES), "x")["xl/styles.xml"];
+		assert.ok(oPlain.indexOf("<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/><family val=\"2\"/></font>" +
+			"<font><b/><sz val=\"11\"/><name val=\"Calibri\"/><family val=\"2\"/></font></fonts>") > 0,
+			"sin estilos de texto, las mismas fuentes que antes");
+	});
+
+	QUnit.test("exportPrevious: columna del valor anterior junto a cada valor", function (assert) {
+		var aData = [
+			{ Region: "Norte", Anio: 2026, V5: 10, V4: 8 },
+			{ Region: "Norte", Anio: 2027, V5: 5, V4: 5 }
+		];
+		var aValues = [{ field: "V5", aggregation: "sum", label: "Real", previousField: "V4" }];
+		var oResult = PivotEngine.compute(aData, { rows: ["Region"], columns: ["Anio"], values: aValues });
+		var oLayout = PivotLayout.create(oResult, aValues, { exportPrevious: true, previousLabel: "{0} (anterior)" });
+		assert.deepEqual(texts(oLayout, 0), ["Region", "2026", "2026 (anterior)", "2027", "2027 (anterior)",
+			"Grand total", "Grand total (anterior)"]);
+		assert.deepEqual(texts(oLayout, 1), ["Norte", 10, 8, 5, 5, 15, 13]);
+		assert.deepEqual(oLayout.rows[1].cells[2].font, { color: "#556b82", strikethrough: true });
+
+		aValues.push({ field: "V5", aggregation: "max", label: "Máx" });
+		oResult = PivotEngine.compute(aData, { rows: ["Region"], columns: ["Anio"], values: aValues });
+		oLayout = PivotLayout.create(oResult, aValues, { exportPrevious: true, previousLabel: "{0} (anterior)" });
+		assert.deepEqual(texts(oLayout, 0).slice(0, 5), ["Anio", "2026", "", "", "2027"], "el año abarca valor, anterior y máx");
+		assert.deepEqual(merge(oLayout, 0, 1), { row: 0, col: 1, rowSpan: 1, colSpan: 3 });
+		assert.deepEqual(texts(oLayout, 1).slice(0, 4), ["Region", "Real", "Real (anterior)", "Máx"]);
+		assert.deepEqual(PivotLayout.create(oResult, aValues).rows[1].cells.length, 1 + 6, "sin exportPrevious no cambia");
+	});
+
 	QUnit.test("Utilidades", function (assert) {
 		assert.strictEqual(XlsxWriter.columnName(0), "A");
 		assert.strictEqual(XlsxWriter.columnName(25), "Z");

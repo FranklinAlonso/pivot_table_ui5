@@ -25,11 +25,12 @@ sap.ui.define([
 	"sap/m/ToolbarSpacer",
 	"sap/ui/core/Icon",
 	"../library",
-	"./ColorRulesDialog"
+	"./ColorRulesDialog",
+	"./TextRulesDialog"
 ], function (
 	Lib, JSONModel, DragInfo, DropInfo, Item, Dialog, Button, List, StandardListItem, CustomListItem,
 	HBox, VBox, FlexBox, Text, Select, CheckBox, Panel, Toolbar, Title, ActionSheet, ToolbarSpacer, Icon, library,
-	ColorRulesDialog
+	ColorRulesDialog, TextRulesDialog
 ) {
 	"use strict";
 
@@ -116,6 +117,7 @@ sap.ui.define([
 				});
 			}),
 			colorRules: oConfig.colorRules || [],
+			textRules: oConfig.textRules || [],
 			showSubtotals: oConfig.showSubtotals,
 			showGrandTotals: oConfig.showGrandTotals,
 			hierarchical: oConfig.hierarchical
@@ -211,6 +213,7 @@ sap.ui.define([
 				};
 			}),
 			colorRules: oState.colorRules || [],
+			textRules: oState.textRules || [],
 			showSubtotals: oState.showSubtotals,
 			showGrandTotals: oState.showGrandTotals,
 			hierarchical: oState.hierarchical
@@ -309,6 +312,33 @@ sap.ui.define([
 			});
 		}
 
+		function onTextRules() {
+			var oState = oModel.getData();
+			function fields(aList) {
+				var aOut = [];
+				aList.forEach(function (f) {
+					if (!aOut.some(function (o) { return o.name === f.name; })) {
+						aOut.push({ name: f.name, label: f.label });
+					}
+				});
+				return aOut;
+			}
+			TextRulesDialog.open({
+				owner: oDialog,
+				rowFields: fields(oState.rows),
+				columnFields: fields(oState.columns),
+				valueFields: fields(oState.values),
+				rules: oState.textRules,
+				getValues: oPivot.getDistinctValues.bind(oPivot)
+			}).then(function (aRules) {
+				if (aRules) {
+					update(function (oCurrent) {
+						oCurrent.textRules = aRules;
+					});
+				}
+			});
+		}
+
 		function createHeader(sTarget) {
 			var aContent = [new Title({ text: oBundle.getText("PANEL_" + sTarget.toUpperCase()), level: "H4" })];
 			if (sTarget === "columns") {
@@ -321,6 +351,16 @@ sap.ui.define([
 					enabled: "{= ${panel>/columns}.length > 0 || ${panel>/colorRules}.length > 0 }",
 					press: onColors
 				}).addStyleClass("pvColorsButton"));
+			}
+			if (sTarget === "values") {
+				aContent.push(new ToolbarSpacer(), new Button({
+					icon: "sap-icon://text-formatting",
+					type: "Transparent",
+					tooltip: oBundle.getText("TEXTS_BUTTON"),
+					// número de reglas definidas junto al icono
+					text: "{= ${panel>/textRules}.length > 0 ? String(${panel>/textRules}.length) : '' }",
+					press: onTextRules
+				}).addStyleClass("pvTextRulesButton"));
 			}
 			return new Toolbar({ content: aContent });
 		}

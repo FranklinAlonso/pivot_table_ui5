@@ -8,10 +8,12 @@ sap.ui.define([
 	"sap/ui/table/Column",
 	"sap/m/Label",
 	"sap/m/Text",
+	"sap/m/VBox",
 	"sap/ui/core/CustomData",
 	"./ValueFormatter",
-	"./ColorRules"
-], function (Column, Label, Text, CustomData, ValueFormatter, ColorRules) {
+	"./ColorRules",
+	"./TextRules"
+], function (Column, Label, Text, VBox, CustomData, ValueFormatter, ColorRules, TextRules) {
 	"use strict";
 
 	var MODEL = "__pivot";
@@ -50,6 +52,27 @@ sap.ui.define([
 		});
 	}
 
+	/**
+	 * Reglas de estilo de texto: data-pivot-text="t<n> t<m>" o "none".
+	 * @param {string[]} aParts Rutas del modelo que recibe fnResolve
+	 * @param {function(...any):int[]} fnResolve Índices de las reglas aplicables
+	 * @returns {sap.ui.core.CustomData} Custom data enlazado
+	 */
+	function textData(aParts, fnResolve) {
+		return new CustomData({
+			key: "pivot-text",
+			value: {
+				parts: aParts.map(function (sPath) {
+					return MODEL + ">" + sPath;
+				}),
+				formatter: function () {
+					return TextRules.token(fnResolve.apply(null, arguments));
+				}
+			},
+			writeToDom: true
+		});
+	}
+
 	function setHeader(oColumn, aTexts, aSpans) {
 		var aLabels;
 		if (aTexts.length <= 1) {
@@ -80,6 +103,7 @@ sap.ui.define([
 		 * @param {string} mOptions.dimensionWidth Ancho de las columnas de dimensión
 		 * @param {string} mOptions.valueWidth Ancho de las columnas de valor
 		 * @param {object|null} [mOptions.colors] Resolutor de ColorRules.createResolver
+	 * @param {object|null} [mOptions.textRules] Resolutor de TextRules.createResolver
 		 * @returns {{columns: sap.ui.table.Column[], columnInfo: object, fixedColumnCount: int}} Columnas
 		 */
 		build: function (oResult, mOptions) {
@@ -89,6 +113,7 @@ sap.ui.define([
 			var aColumns = [];
 			var mColumnInfo = {};
 			var oColors = mOptions.colors || null;
+			var oTextRules = mOptions.textRules || null;
 
 			function templateData(iColumnRule, iColumnLevel) {
 				var aData = [typeData()];
@@ -112,13 +137,75 @@ sap.ui.define([
 			}
 
 			function dimensionColumn(sHeader, sProperty, bShowColumnDims) {
+				var aData = templateData(-1);
+				if (oTextRules) {
+					aData.push(textData(["__rowKeys", "__type"], oTextRules.dimension));
+				}
 				var oColumn = new Column({
 					width: mOptions.dimensionWidth,
 					autoResizable: true,
-					template: new Text({ text: "{" + MODEL + ">" + sProperty + "}", wrapping: false, customData: templateData(-1) })
+					template: new Text({ text: "{" + MODEL + ">" + sProperty + "}", wrapping: false, customData: aData })
 				});
 				setHeader(oColumn, dimensionHeader(sHeader, bShowColumnDims));
 				return oColumn;
+			}
+
+			/*
+			 * Celda de valor. Con previousField, si el valor cambió se muestra encima el anterior
+			 * (pequeño y tachado) y el actual con data-pivot-changed="true" (color de aviso).
+			 */
+			function valueTemplate(oLeaf, oValue, aData) {
+				var fnFormat = ValueFormatter.create(oValue);
+				var bPrevious = !!oValue.previousField;
+				var sPath = oLeaf.id;
+				var sPrevPath = sPath + "_prev";
+				if (oTextRules) {
+					aData.push(textData(["__rowKeys", "__type", sPath, sPrevPath], function (aRowKeys, sRowType, vValue, vPrev) {
+						return oTextRules.value(oLeaf, aRowKeys, sRowType, vValue, bPrevious ? vPrev : undefined);
+					}));
+				}
+				if (!bPrevious) {
+					return new Text({
+						text: { path: MODEL + ">" + sPath, formatter: fnFormat },
+						wrapping: false,
+						textAlign: "End",
+						customData: aData
+					});
+				}
+				var oChangedParts = {
+					parts: [MODEL + ">" + sPath, MODEL + ">" + sPrevPath],
+					formatter: function (vValue, vPrev) {
+						return TextRules.isChanged(vValue, vPrev);
+					}
+				};
+				aData.push(new CustomData({
+					key: "pivot-changed",
+					value: {
+						parts: oChangedParts.parts,
+						formatter: function (vValue, vPrev) {
+							return String(TextRules.isChanged(vValue, vPrev));
+						}
+					},
+					writeToDom: true
+				}));
+				return new VBox({
+					alignItems: "End",
+					renderType: "Bare",
+					items: [
+						new Text({
+							text: { path: MODEL + ">" + sPrevPath, formatter: fnFormat },
+							visible: oChangedParts,
+							wrapping: false,
+							textAlign: "End"
+						}).addStyleClass("pvPreviousValue"),
+						new Text({
+							text: { path: MODEL + ">" + sPath, formatter: fnFormat },
+							wrapping: false,
+							textAlign: "End",
+							customData: aData
+						})
+					]
+				}).addStyleClass("pvValueWithPrevious");
 			}
 
 			if (mOptions.hierarchical) {
@@ -139,12 +226,7 @@ sap.ui.define([
 					width: mOptions.valueWidth,
 					hAlign: "End",
 					autoResizable: true,
-					template: new Text({
-						text: { path: MODEL + ">" + oLeaf.id, formatter: ValueFormatter.create(oValue) },
-						wrapping: false,
-						textAlign: "End",
-						customData: templateData(iColumnRule, ColorRules.levelOf(oLeaf.type))
-					})
+					template: valueTemplate(oLeaf, oValue, templateData(iColumnRule, ColorRules.levelOf(oLeaf.type)))
 				});
 				var aLabels = setHeader(oColumn, oLeaf.labels.length ? oLeaf.labels : [oValue.label || ""], oLeaf.spans);
 				if (oColors) {

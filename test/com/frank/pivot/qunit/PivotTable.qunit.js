@@ -353,6 +353,145 @@ sap.ui.define([
 		assert.strictEqual(oPivot.getValues()[1].getFormat(), "Percent");
 	});
 
+	QUnit.module("PivotTable - estilos de texto y valor anterior", {
+		afterEach: function () {
+			this.oPivot && this.oPivot.destroy();
+		}
+	});
+
+	// Comparación de versiones como en las capturas: estado como dimensión de fila, v4 anterior y v5 nueva
+	var VERSIONS = [
+		{ Estado: "Modificada", Ceco: "CCPLAN01", Mes: "Sep", V4: 34651, V5: 34651.5 },
+		{ Estado: "Modificada", Ceco: "CCPLAN02", Mes: "Sep", V4: 19767, V5: 19767 },
+		{ Estado: "Eliminada", Ceco: "CCPLAN09", Mes: "Sep", V4: 17147, V5: null }
+	];
+
+	function createVersions(mSettings) {
+		return new PivotTable(Object.assign({
+			records: VERSIONS,
+			rows: ["Estado", "Ceco"],
+			columns: ["Mes"],
+			showSubtotals: false,
+			values: [new PivotValue({ field: "V5", previousField: "V4", label: "Real" })],
+			textRules: [{ scope: "row", field: "Estado", value: "Eliminada", color: "Negative", strikethrough: true }]
+		}, mSettings));
+	}
+
+	/**
+	 * Fila de la tabla interna (DOM) cuyo texto contiene sText. sap.ui.table divide cada fila en dos tr
+	 * (columnas fijas y desplazables) con el mismo data-sap-ui-rowindex: se buscan en ambas.
+	 */
+	function domRow(oPivot, sText) {
+		var oDom = oPivot.getDomRef();
+		var oTr = Array.prototype.filter.call(oDom.querySelectorAll("tr.sapUiTableRow"), function (o) {
+			return o.textContent.indexOf(sText) >= 0;
+		})[0];
+		if (!oTr) {
+			return null;
+		}
+		var aParts = oDom.querySelectorAll("tr.sapUiTableRow[data-sap-ui-rowindex=\"" + oTr.getAttribute("data-sap-ui-rowindex") + "\"]");
+		function all(sSelector) {
+			var aOut = [];
+			Array.prototype.forEach.call(aParts, function (oPart) {
+				aOut.push.apply(aOut, oPart.querySelectorAll(sSelector));
+			});
+			return aOut;
+		}
+		return {
+			querySelectorAll: all,
+			querySelector: function (sSelector) {
+				return all(sSelector)[0] || null;
+			}
+		};
+	}
+
+	QUnit.test("Regla de fila: texto tachado en rojo en dimensiones y valores; el total no", async function (assert) {
+		var oPivot = this.oPivot = await render(createVersions());
+		var oStyle = document.getElementById(oPivot.getId() + "-text");
+		assert.ok(oStyle && /line-through/.test(oStyle.textContent), "hoja de estilo de las reglas");
+		var oRow = domRow(oPivot, "CCPLAN09");
+		var aStyled = oRow.querySelectorAll("[data-pivot-text~='t0']");
+		assert.ok(aStyled.length >= 3, "dimensiones y valores de la fila eliminada: " + aStyled.length);
+		assert.strictEqual(getComputedStyle(aStyled[0]).textDecorationLine, "line-through", "tachado aplicado");
+		var oTotal = domRow(oPivot, "Grand total") || domRow(oPivot, "Total general");
+		assert.strictEqual(oTotal.querySelectorAll("[data-pivot-text~='t0']").length, 0, "el total no lleva la regla");
+	});
+
+	QUnit.test("Valor anterior: tachado encima del actual solo si cambió", async function (assert) {
+		var oPivot = this.oPivot = await render(createVersions({ textRules: null }));
+		var oChanged = domRow(oPivot, "CCPLAN01");
+		var aPrevious = oChanged.querySelectorAll(".pvPreviousValue").filter(function (o) {
+			return o.offsetParent !== null;
+		});
+		assert.ok(aPrevious.length >= 1, "anterior visible en la fila modificada");
+		assert.strictEqual(getComputedStyle(aPrevious[0]).textDecorationLine, "line-through");
+		assert.ok(oChanged.querySelector("[data-pivot-changed='true']"), "valor actual marcado como cambiado");
+		var oSame = domRow(oPivot, "CCPLAN02");
+		assert.strictEqual(oSame.querySelectorAll("[data-pivot-changed='true']").length, 0, "sin cambio: sin marca");
+		assert.strictEqual(oSame.querySelectorAll(".pvPreviousValue").filter(function (o) {
+			return o.offsetParent !== null;
+		}).length, 0, "sin cambio: sin anterior visible");
+		assert.strictEqual(oPivot.getInnerTable().getRowMode().getRowContentHeight(), 40, "filas de dos líneas");
+	});
+
+	QUnit.test("Una regla 'changed' cambia el estilo del valor actual", async function (assert) {
+		var oPivot = this.oPivot = await render(createVersions({
+			textRules: [{ scope: "cell", operator: "changed", color: "#0064d9", bold: false }]
+		}));
+		var oCurrent = domRow(oPivot, "CCPLAN01").querySelector("[data-pivot-changed='true']");
+		assert.strictEqual(oCurrent.getAttribute("data-pivot-text"), "t0");
+		assert.strictEqual(getComputedStyle(oCurrent).color, "rgb(0, 100, 217)", "el color de la regla prevalece");
+	});
+
+	QUnit.test("cellPress incluye el valor anterior; configuración y vistas", async function (assert) {
+		var oPivot = this.oPivot = await render(createVersions());
+		var oResult = oPivot.getResult();
+		var oLeaf = oResult.columns[0];
+		var oRow = oResult.rows.filter(function (r) { return r.__rowKeys[1] === "CCPLAN01"; })[0];
+		assert.deepEqual([oRow[oLeaf.id], oRow[oLeaf.id + "_prev"]], [34651.5, 34651]);
+		var oParams;
+		oPivot.attachCellPress(function (oEvent) {
+			oParams = oEvent.getParameters();
+		});
+		var oColumn = oPivot.getInnerTable().getColumns()[2];
+		oPivot._onCellClick({
+			getParameter: function (sName) {
+				return sName === "columnId" ? oColumn.getId() : { getObject: function () { return oRow; } };
+			}
+		});
+		assert.deepEqual([oParams.value, oParams.previousValue], [34651.5, 34651]);
+
+		var oConfig = JSON.parse(JSON.stringify(oPivot.getConfiguration()));
+		assert.strictEqual(oConfig.values[0].previousField, "V4");
+		assert.deepEqual(oConfig.textRules, [{ scope: "row", field: "Estado", value: "Eliminada", color: "Negative", strikethrough: true }]);
+		oPivot.setConfiguration({ textRules: [], values: [{ field: "V5" }] });
+		assert.deepEqual(oPivot.getTextRules(), []);
+		oPivot.setConfiguration(oConfig);
+		assert.strictEqual(oPivot.getValues()[0].getPreviousField(), "V4");
+		assert.strictEqual(oPivot.getTextRules().length, 1);
+	});
+
+	QUnit.test("Cambiar solo las reglas de texto no recalcula el pivote", async function (assert) {
+		var oPivot = this.oPivot = await render(createVersions());
+		var oResult = oPivot.getResult();
+		oPivot.setTextRules([{ scope: "row", field: "Estado", value: "Modificada", italic: true }]);
+		await nextUIUpdate();
+		assert.strictEqual(oPivot.getResult(), oResult, "mismo resultado");
+		assert.ok(domRow(oPivot, "CCPLAN01").querySelector("[data-pivot-text~='t0']"), "nueva regla aplicada");
+	});
+
+	QUnit.test("Exportación: estilos de texto y columna del valor anterior", async function (assert) {
+		var oPivot = this.oPivot = await render(createVersions({ exportPrevious: true }));
+		var oLayout = PivotExport.createLayout(oPivot.getResult(), oPivot._aValueSpecs, {
+			textRules: oPivot.getTextRules(), exportPrevious: true, previousLabel: "{0} (anterior)"
+		});
+		var aHeader = oLayout.rows[oLayout.headerRows - 1].cells.map(function (c) { return c.value; });
+		assert.ok(aHeader.indexOf("Sep (anterior)") > 0 || aHeader.some(function (s) { return /anterior/.test(s); }),
+			"columna del anterior: " + aHeader.join(" | "));
+		var aDeleted = oLayout.rows.filter(function (r) { return r.cells[1].value === "CCPLAN09"; })[0].cells;
+		assert.deepEqual(aDeleted[1].font, { color: "#aa0808", strikethrough: true }, "fila eliminada tachada en rojo");
+	});
+
 	QUnit.module("PivotExport");
 
 	QUnit.test("La hoja reproduce la disposición de la tabla", async function (assert) {
